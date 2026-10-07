@@ -36,7 +36,7 @@ def normalizer_from_dataset(root: Path) -> dict:
     manifest = Manifest.read(root)
     readers = [ShardReader(root, entry) for entry in manifest.select("train")]
     traces = [r.arrays["trace"] for r in readers]
-    valids = [r.arrays["trace_valid"] for r in readers]
+    valids = [np.asarray(r.arrays["trace_valid"]) & np.asarray(r.arrays["trace_moving"])[..., None] for r in readers]
     source = f"{manifest.teacher_revision}:" + ",".join(e.path for e in manifest.select("train"))
     return save_normalizer(root / "normalizer.json", compute_sigma(traces, valids), source)
 

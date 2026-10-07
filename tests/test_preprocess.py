@@ -89,3 +89,12 @@ def test_moving_points_uses_pixel_extent():
     assert moving_points(points, valid, k, 35.0).tolist() == [True, False]
     valid[0, 4:] = False
     assert moving_points(points, valid, k, 35.0).tolist() == [False, False]
+
+
+def test_normalizer_uses_only_moving_points(tmp_path):
+    from twe.data.synthetic import write_synthetic
+    from twe.preprocess.normalizer import load_normalizer
+
+    root = write_synthetic(tmp_path / "data")
+    sigma = np.asarray(load_normalizer(root / "normalizer.json")["sigma"])
+    assert sigma[:2].max() > 0.05
