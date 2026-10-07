@@ -23,11 +23,6 @@ def masked_flow_loss(velocity: Tensor, target: Tensor, weight: Tensor) -> Tensor
     return (error * weight).sum() / (elements * weight.sum() + 1e-6)
 
 
-def point_weights(mask: Tensor, moving: Tensor, static_weight: float) -> Tensor:
-    base = mask.float()
-    return base * torch.where(moving, torch.ones_like(base), torch.full_like(base, static_weight))
-
-
 def validity_loss(logits: Tensor, target: Tensor, anchor_mask: Tensor) -> Tensor:
     loss = F.binary_cross_entropy_with_logits(logits.float(), target.float(), reduction="none")
     weight = anchor_mask.float()[..., None].expand_as(loss)

@@ -8,21 +8,24 @@ import torch
 from torch.utils.data import DataLoader
 
 from twe.config import Stage1Config, load_stage1_config
-from twe.data.dataset import WorldWindowDataset, collate
+from twe.data.dataset import QuerySampling, WorldWindowDataset, collate
 from twe.data.sampler import MixtureBatchSampler
 from twe.models.world_module import WorldModule, build_world_module
 from twe.preprocess.bspline_targets import BSplineTargets
 from twe.preprocess.normalizer import load_normalizer
 from twe.training.checkpoint import save_world, world_artifact
 from twe.training.evaluate import evaluate
-from twe.training.objective import (masked_flow_loss, noisy_controls, point_weights, sample_flow_time, validity_loss,
-                                    warmup_cosine)
+from twe.training.objective import masked_flow_loss, noisy_controls, sample_flow_time, validity_loss, warmup_cosine
 
 
 def make_fitter(cfg: Stage1Config) -> BSplineTargets:
     w = cfg.world
     return BSplineTargets(w.future_steps, w.free_control_points, w.bspline_degree, cfg.fit_regularization,
                           cfg.fit_min_valid_steps, cfg.fit_max_condition)
+
+
+def query_sampling(cfg: Stage1Config, randomize: bool) -> QuerySampling:
+    return QuerySampling(cfg.world.num_anchors, cfg.min_moving_points, randomize)
 
 
 def parameter_groups(module: WorldModule, weight_decay: float) -> list[dict]:
@@ -49,8 +52,7 @@ def train_step(module, context, target, cfg: Stage1Config, autocast) -> dict[str
         s = sample_flow_time(target.controls.shape[0], cfg.endpoint_time_probability, target.controls.device)
         noise = torch.randn_like(target.controls)
         outputs = module(inputs, noisy_controls(target.controls, noise, s), s)
-    weight = point_weights(context.anchor_mask & target.fit_valid, target.moving, cfg.static_point_weight)
-    flow = masked_flow_loss(outputs.velocity, noise - target.controls, weight)
+    flow = masked_flow_loss(outputs.velocity, noise - target.controls, context.anchor_mask & target.fit_valid)
     valid = validity_loss(outputs.validity_logits, target.trace_valid, context.anchor_mask)
     return {"loss": flow + cfg.validity_loss_weight * valid, "flow": flow, "validity": valid}
 
@@ -62,8 +64,8 @@ def train(cfg: Stage1Config, data_root: Path, out_dir: Path, module: WorldModule
     out_dir.mkdir(parents=True, exist_ok=True)
     normalizer = load_normalizer(data_root / "normalizer.json")
     fitter = make_fitter(cfg)
-    train_set = WorldWindowDataset(data_root, "train", normalizer["sigma"], fitter)
-    val_set = WorldWindowDataset(data_root, "validation", normalizer["sigma"], fitter)
+    train_set = WorldWindowDataset(data_root, "train", normalizer["sigma"], fitter, query_sampling(cfg, True))
+    val_set = WorldWindowDataset(data_root, "validation", normalizer["sigma"], fitter, query_sampling(cfg, False))
     module = (module or build_world_module(cfg.world)).to(device)
     (out_dir / "parameters.json").write_text(json.dumps(parameter_report(module), indent=2))
     optimizer = torch.optim.AdamW(parameter_groups(module, cfg.weight_decay), lr=cfg.learning_rate,

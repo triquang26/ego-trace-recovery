@@ -4,7 +4,7 @@ import torch
 
 from synthetic import tiny_module, tiny_stage1
 from twe.data.synthetic import write_synthetic
-from twe.data.dataset import WorldWindowDataset
+from twe.data.dataset import QuerySampling, WorldWindowDataset
 from twe.data.sampler import MixtureBatchSampler
 from twe.training.checkpoint import load_world
 from twe.training.pretrain_world import make_fitter, train
@@ -13,7 +13,7 @@ from twe.training.pretrain_world import make_fitter, train
 def test_sampler_mixture_and_null_cap(tmp_path):
     root = write_synthetic(tmp_path / "data")
     cfg = tiny_stage1()
-    dataset = WorldWindowDataset(root, "train", [1, 1, 1], make_fitter(cfg))
+    dataset = WorldWindowDataset(root, "train", [1, 1, 1], make_fitter(cfg), QuerySampling())
     metas = [dataset.meta(i) for i in range(len(dataset))]
     sampler = MixtureBatchSampler(metas, cfg.mixture, 20, 0.2, 200, 0)
     pools, nulls = {}, []
@@ -26,14 +26,20 @@ def test_sampler_mixture_and_null_cap(tmp_path):
     assert abs(pools["human_nominal"] / total - 0.5) < 0.03
 
 
-def test_dataset_targets_align_with_anchors(tmp_path):
+def test_dataset_samples_only_moving_points(tmp_path):
     root = write_synthetic(tmp_path / "data")
     cfg = tiny_stage1()
-    dataset = WorldWindowDataset(root, "train", [1, 1, 1], make_fitter(cfg))
-    item = dataset[1]
-    assert item["controls"].shape == (64, 10, 3) and item["fit_valid"][:16].all()
-    moving = item["trace"].abs().sum((-1, -2)) > 0
-    assert moving[:16].all() and not moving[16:].any()
+    train = WorldWindowDataset(root, "train", [1, 1, 1], make_fitter(cfg), QuerySampling(64, 4, True))
+    for index in range(5):
+        item = train[index]
+        count = int(item["anchor_mask"].sum())
+        assert 4 <= count <= 16 and item["fit_valid"][:count].all() and not item["fit_valid"][count:].any()
+        motion = item["trace"].abs().sum((-1, -2))
+        assert (motion[:count] > 0).all() and (motion[count:] == 0).all()
+        assert item["controls"].shape == (64, 10, 3)
+    val = WorldWindowDataset(root, "validation", [1, 1, 1], make_fitter(cfg), QuerySampling(64, 4, False))
+    first, again = val[0], val[0]
+    assert int(first["anchor_mask"].sum()) == 16 and torch.equal(first["anchor_uv"], again["anchor_uv"])
 
 
 def test_training_reduces_loss_and_checkpoint_loads(tmp_path):
@@ -63,7 +69,7 @@ def test_demo_renders_cases(tmp_path):
     root = write_synthetic(tmp_path / "data")
     cfg = tiny_stage1()
     fitter = make_fitter(cfg)
-    dataset = WorldWindowDataset(root, "validation", [1, 1, 1], fitter)
+    dataset = WorldWindowDataset(root, "validation", [1, 1, 1], fitter, QuerySampling(64, 4, False))
     record = build_demo(DemoBuilder(tiny_module(), fitter, dataset, [1, 1, 1], "cpu"), tmp_path / "demo", 24)
     groups = {case["group"] for case in record["cases"]}
     assert {"best", "worst", "instruction", "seeds"} <= groups

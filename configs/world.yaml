@@ -9,6 +9,7 @@ pooled_grid: 8
 text_dim: 512
 text_max_length: 64
 num_anchors: 64
+query_pool: 128
 anchor_entities: 12
 anchor_min_per_entity: 3
 anchor_spatial_weight: 0.5

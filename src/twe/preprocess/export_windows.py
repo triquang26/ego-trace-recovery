@@ -104,7 +104,7 @@ def export_chunk(recording: Recording, chunk: Chunk, teacher: TrackTeacher, sele
     xy = np.concatenate([q["xy"] for q in queries])
     when = np.concatenate([np.full(len(q["xy"]), q["start"]) for q in queries])
     tracks = teacher.track(frames, xy, when)
-    count = cfg.num_anchors
+    count = len(queries[0]["uv"])
     records = [window_record(recording, chunk, q, slice(i * count, (i + 1) * count), tracks, cfg, settings)
                for i, q in enumerate(queries)]
     return [r for r in records if r is not None]

@@ -67,7 +67,7 @@ def train_world(data: str, run: str, config: str = "configs/stage1.yaml", overri
 @app.function(gpu=GPU, volumes={VOLUME_PATH: volume}, secrets=[hf_secret], timeout=3600, cpu=8, memory=32768)
 def demo(data: str, run: str, count: int = 200, config: str = "configs/stage1.yaml") -> dict:
     from twe.config import load_stage1_config
-    from twe.data.dataset import WorldWindowDataset
+    from twe.data.dataset import QuerySampling, WorldWindowDataset
     from twe.evaluation.demo import DemoBuilder, build_demo
     from twe.models.world_module import build_world_module
     from twe.preprocess.normalizer import load_normalizer
@@ -81,7 +81,8 @@ def demo(data: str, run: str, count: int = 200, config: str = "configs/stage1.ya
     fitter = make_fitter(cfg)
     module = build_world_module(cfg.world)
     load_world(out / "world_latest.pt", module)
-    dataset = WorldWindowDataset(root, "validation", sigma, fitter)
+    sampling = QuerySampling(cfg.world.num_anchors, cfg.min_moving_points, False)
+    dataset = WorldWindowDataset(root, "validation", sigma, fitter, sampling)
     record = build_demo(DemoBuilder(module.to("cuda"), fitter, dataset, sigma, "cuda"), out / "demo", count)
     volume.commit()
     sync_to_bucket(out / "demo", f"runs/{run}/demo")

@@ -52,10 +52,8 @@ class DemoBuilder:
             rows.append({"index": index, "instruction": item["instruction"], **stats})
         return rows
 
-    def paths(self, index: int, pred: np.ndarray, with_teacher: bool) -> dict:
-        reader, row = self.dataset.locate(index)
-        xyz, k = np.array(reader.arrays["anchor_xyz"][row]), np.array(reader.arrays["intrinsics"][row])
-        item = self.dataset[index]
+    def paths(self, item: dict, pred: np.ndarray, with_teacher: bool) -> dict:
+        xyz, k = item["anchor_xyz"].numpy(), item["intrinsics"].numpy()
         valid = item["trace_valid"].numpy()
         out = {"model": (project(xyz, pred * self.sigma, k), np.ones_like(valid), PRED)}
         if with_teacher:
@@ -72,7 +70,7 @@ class DemoBuilder:
             context, _, _ = self.context(index, instruction)
             pred = predict(self.module, self.fitter, context, seed, self.steps)[0]
             preds.append(pred)
-            panels.append({"paths": self.paths(index, pred, teacher), "mask": mask, "title": title,
+            panels.append({"paths": self.paths(item, pred, teacher), "mask": mask, "title": title,
                            "dynamic": dynamic})
         meta = self.dataset.meta(index)
         render_case(out / f"{name}.png", rgb, panels, f"{meta['sample_id']}")
