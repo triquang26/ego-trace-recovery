@@ -63,7 +63,12 @@ class SpaTrackerTeacher:
         reliability[error > self.max_reprojection_px, :] = 0.0
         current = point_map[0, 2].float().cpu().numpy()
         current[conf_depth[0].float().cpu().numpy() < self.depth_confidence] = np.nan
-        return TeacherTracks(points_world, reliability, np.linalg.inv(c2w), current, "opencv", self.revision)
+        source_k = intrs[0].double().cpu().numpy().copy()
+        source_k[0, 2] += 0.5
+        source_k[1, 2] += 0.5
+        source_k = np.diag([1 / scale[0], 1 / scale[1], 1.0]) @ source_k
+        return TeacherTracks(points_world, reliability, np.linalg.inv(c2w), current, "opencv", self.revision,
+                             source_k)
 
 
 def load_spatracker(device: str = "cuda") -> SpaTrackerTeacher:

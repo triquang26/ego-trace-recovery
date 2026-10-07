@@ -55,3 +55,16 @@ def test_training_reduces_loss_and_checkpoint_loads(tmp_path):
     train(resumed, root, out, module=tiny_module(), device="cpu")
     state = torch.load(out / "train_state.pt", weights_only=False)
     assert state["update"] == 70
+
+
+def test_demo_renders_cases(tmp_path):
+    from twe.evaluation.demo import DemoBuilder, build_demo
+
+    root = write_synthetic(tmp_path / "data")
+    cfg = tiny_stage1()
+    fitter = make_fitter(cfg)
+    dataset = WorldWindowDataset(root, "validation", [1, 1, 1], fitter)
+    record = build_demo(DemoBuilder(tiny_module(), fitter, dataset, [1, 1, 1], "cpu"), tmp_path / "demo", 24)
+    groups = {case["group"] for case in record["cases"]}
+    assert {"best", "worst", "instruction", "seeds"} <= groups
+    assert all((tmp_path / "demo" / case["image"]).exists() for case in record["cases"])

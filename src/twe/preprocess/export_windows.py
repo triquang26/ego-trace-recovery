@@ -35,6 +35,13 @@ class ExportSettings:
     geometry_provenance: str = "estimated"
 
 
+def letterbox_intrinsics(intrinsics: np.ndarray | None, transform) -> np.ndarray:
+    if intrinsics is None:
+        return np.full((3, 3), np.nan, dtype=np.float32)
+    lift = np.array([[transform.scale_x, 0, transform.offset_x], [0, transform.scale_y, transform.offset_y], [0, 0, 1]])
+    return (lift @ intrinsics).astype(np.float32)
+
+
 def export_window(recording: Recording, current_index: int, teacher: TrackTeacher, select: AnchorSelector,
                   cfg: WorldConfig, settings: ExportSettings) -> tuple[dict, dict] | None:
     times = recording.timestamps
@@ -59,7 +66,9 @@ def export_window(recording: Recording, current_index: int, teacher: TrackTeache
     trace, trace_valid, trace_reliability = relative_displacements(camera, reliability, scale,
                                                                    settings.reliability_threshold)
     trace_valid &= mask[:, None]
-    arrays = {"rgb": rgb, "image_valid": valid, "anchor_uv": uv, "anchor_mask": mask, "trace": trace,
+    anchor_xyz = np.where(np.isfinite(camera[:, 0]), camera[:, 0] / scale, 0.0).astype(np.float32)
+    arrays = {"anchor_xyz": anchor_xyz, "intrinsics": letterbox_intrinsics(tracks.intrinsics, transform),
+              "rgb": rgb, "image_valid": valid, "anchor_uv": uv, "anchor_mask": mask, "trace": trace,
               "trace_valid": trace_valid, "trace_reliability": trace_reliability * trace_valid}
     meta = {
         "sample_id": f"{recording.source}/{recording.recording_id}/{current_time:.3f}",

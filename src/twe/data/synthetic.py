@@ -17,7 +17,7 @@ MOVING = 16
 MASKED = 4
 
 
-def synthetic_window(rng: np.random.Generator, scene: dict, cfg: WorldConfig) -> tuple[dict, dict]:
+def synthetic_window(rng: np.random.Generator, scene: dict, cfg: WorldConfig, window: int) -> tuple[dict, dict]:
     height, width = SOURCE_SHAPE
     image = np.empty((height, width, 3), dtype=np.uint8)
     image[:] = scene["background"]
@@ -46,9 +46,13 @@ def synthetic_window(rng: np.random.Generator, scene: dict, cfg: WorldConfig) ->
     occluded = rng.choice(np.arange(MOVING, cfg.num_anchors - MASKED), 6, replace=False)
     trace_valid[occluded, rng.integers(8, cfg.future_steps):] = False
     trace = np.where(trace_valid[..., None], trace, 0.0).astype(np.float32)
-    arrays = {"rgb": rgb, "image_valid": valid, "anchor_uv": uv, "anchor_mask": mask, "trace": trace,
+    focal = float(cfg.image_size)
+    intrinsics = np.array([[focal, 0, 0], [0, focal, 0], [0, 0, 1]], dtype=np.float32)
+    anchor_xyz = np.concatenate([uv, np.ones((len(uv), 1), np.float32)], 1)
+    arrays = {"anchor_xyz": anchor_xyz, "intrinsics": intrinsics, "rgb": rgb, "image_valid": valid, "anchor_uv": uv, "anchor_mask": mask, "trace": trace,
               "trace_valid": trace_valid, "trace_reliability": trace_valid.astype(np.float32)}
-    meta = {"source": "synthetic", "recording_id": scene["recording_id"], "split_group": scene["recording_id"],
+    meta = {"sample_id": f"synthetic/{scene['recording_id']}/{window}",
+            "source": "synthetic", "recording_id": scene["recording_id"], "split_group": scene["recording_id"],
             "original_instruction": scene["instruction"], "instruction_available_at_t": scene["instruction"] is not None,
             "letterbox_transform": transform.to_dict(), "coordinate_contract": COORDINATE_CONTRACT,
             "geometry_provenance": "synthetic"}
@@ -76,8 +80,8 @@ def write_synthetic(root: Path, per_shard: int = 32, windows_per_recording: int 
             null_fraction = 0.3 if pool == "human_nominal" else 0.0
             for r in range(count // windows_per_recording):
                 scene = synthetic_scene(rng, pool, f"{split}-{pool}-{r}", null_fraction)
-                for _ in range(windows_per_recording):
-                    writer.add(*synthetic_window(rng, scene, cfg))
+                for window in range(windows_per_recording):
+                    writer.add(*synthetic_window(rng, scene, cfg, window))
             entries.append(writer.close())
     Manifest(entries, "synthetic-v1").write(root)
     normalizer_from_dataset(root)

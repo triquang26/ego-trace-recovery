@@ -12,7 +12,7 @@ image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("ffmpeg")
     .uv_pip_install("torch==2.8.0", "transformers>=4.44", "sentencepiece>=0.2", "numpy>=1.26", "pyyaml>=6",
-                    "huggingface_hub>=1.0", "av>=12")
+                    "huggingface_hub>=1.0", "av>=12", "h5py>=3.10", "matplotlib>=3.8")
     .env({"HF_HOME": "/vol/hf_cache", "PYTHONUNBUFFERED": "1"})
     .add_local_dir(ROOT / "configs", "/root/configs")
     .add_local_python_source("twe")
@@ -64,6 +64,30 @@ def train_world(data: str, run: str, config: str = "configs/stage1.yaml", overri
     return train(cfg, VOLUME_PATH / "data" / data, out, device="cuda", on_checkpoint=on_checkpoint)
 
 
+@app.function(gpu=GPU, volumes={VOLUME_PATH: volume}, secrets=[hf_secret], timeout=3600, cpu=8, memory=32768)
+def demo(data: str, run: str, count: int = 200, config: str = "configs/stage1.yaml") -> dict:
+    from twe.config import load_stage1_config
+    from twe.data.dataset import WorldWindowDataset
+    from twe.evaluation.demo import DemoBuilder, build_demo
+    from twe.models.world_module import build_world_module
+    from twe.preprocess.normalizer import load_normalizer
+    from twe.training.checkpoint import load_world
+    from twe.training.pretrain_world import make_fitter
+
+    volume.reload()
+    cfg = load_stage1_config(Path("/root") / config)
+    root, out = VOLUME_PATH / "data" / data, VOLUME_PATH / "runs" / run
+    sigma = load_normalizer(root / "normalizer.json")["sigma"]
+    fitter = make_fitter(cfg)
+    module = build_world_module(cfg.world)
+    load_world(out / "world_latest.pt", module)
+    dataset = WorldWindowDataset(root, "validation", sigma, fitter)
+    record = build_demo(DemoBuilder(module.to("cuda"), fitter, dataset, sigma, "cuda"), out / "demo", count)
+    volume.commit()
+    sync_to_bucket(out / "demo", f"runs/{run}/demo")
+    return record["summary"]
+
+
 @app.local_entrypoint()
 def main(action: str = "smoke", data: str = "synthetic", run: str = "smoke", overrides: str = "") -> None:
     import json
@@ -76,6 +100,8 @@ def main(action: str = "smoke", data: str = "synthetic", run: str = "smoke", ove
         print(train_world.remote(data, run, overrides=parsed))
     elif action == "normalizer":
         print(compute_normalizer.remote(data))
+    elif action == "demo":
+        print(demo.remote(data, run))
     elif action == "train":
         print(train_world.remote(data, run, overrides=parsed))
     else:

@@ -15,6 +15,7 @@ dependencies = [
   "huggingface_hub>=1.0",
   "av>=12",
   "h5py>=3.10",
+  "matplotlib>=3.8",
 ]
 
 [project.optional-dependencies]

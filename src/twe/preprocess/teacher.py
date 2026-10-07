@@ -12,6 +12,7 @@ class TeacherTracks:
     current_depth: np.ndarray
     convention: str
     revision: str
+    intrinsics: np.ndarray | None = None
 
 
 class TrackTeacher(Protocol):
