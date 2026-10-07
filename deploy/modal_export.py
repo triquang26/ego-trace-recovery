@@ -11,7 +11,9 @@ SPATRACKER = "/opt/SpaTrackerV2"
 SPATRACKER_COMMIT = "7e12274c52077860cebfe007a6290777db43b63c"
 EGODEX_URL = "https://ml-site.cdn-apple.com/datasets/egodex/{part}.zip"
 
+BUCKET = os.environ.get("TWE_HF_BUCKET", "twanghcmut/trace-world-expert")
 download_image = modal.Image.debian_slim(python_version="3.11").apt_install("curl", "unzip")
+upload_image = modal.Image.debian_slim(python_version="3.11").uv_pip_install("huggingface_hub>=1.0")
 teacher_image = (
     modal.Image.from_registry("nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04", add_python="3.11")
     .apt_install("git", "ffmpeg", "libgl1", "libglib2.0-0", "build-essential")
@@ -30,6 +32,7 @@ teacher_image = (
 )
 app = modal.App("trace-world-expert-export")
 volume = modal.Volume.from_name("trace-world-expert", create_if_missing=True)
+hf_secret = modal.Secret.from_name("huggingface", required_keys=["HF_TOKEN"])
 
 
 @app.function(image=download_image, volumes={VOLUME_PATH: volume}, timeout=12 * 3600, cpu=8, memory=16384,
@@ -124,6 +127,16 @@ def teacher_videos(dataset: str, count: int = 8, frame_step: int = 2) -> list[di
     return records
 
 
+@app.function(image=upload_image, volumes={VOLUME_PATH: volume}, secrets=[hf_secret], timeout=6 * 3600, cpu=4)
+def upload(dataset: str) -> str:
+    from huggingface_hub import HfApi
+
+    volume.reload()
+    target = f"hf://buckets/{BUCKET}/data/{dataset}"
+    HfApi(token=os.environ["HF_TOKEN"]).sync_bucket(str(VOLUME_PATH / "data" / dataset), target, quiet=True)
+    return target
+
+
 @app.local_entrypoint()
 def main(action: str = "export", part: str = "test", dataset: str = "egodex_v1", split: str = "",
          start: int = 0, episodes: int = 0, per_shard: int = 16, stride: float = 0.5, val_every: int = 0,
@@ -145,6 +158,8 @@ def main(action: str = "export", part: str = "test", dataset: str = "egodex_v1",
     elif action == "teacher-videos":
         for record in teacher_videos.remote(dataset):
             print(record)
+    elif action == "upload":
+        print(upload.remote(dataset))
     elif action == "finalize":
         print(finalize.remote(dataset))
     else:

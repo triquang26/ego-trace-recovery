@@ -48,12 +48,13 @@ Dữ liệu và run nằm trong Modal Volume `trace-world-expert` (`/vol/data/<d
 
 ```bash
 modal run --detach deploy/modal_export.py --action download --part test
-modal run deploy/modal_export.py --action export --part test --dataset egodex_v2 --episodes 4 --per-shard 4
-modal run deploy/modal_export.py --action teacher-videos --dataset egodex_v2
-modal run --detach deploy/modal_export.py --action export --part test --dataset egodex_v2 --every 4 --per-shard 10 --val-every 7
-modal run deploy/modal_export.py --action finalize --dataset egodex_v2
-modal run --detach deploy/modal_app.py --action train --data egodex_v2 --run egodex_v2 --overrides '{"optimizer_updates": 3000}'
-modal run deploy/modal_app.py --action demo --data egodex_v2 --run egodex_v2
+modal run deploy/modal_export.py --action export --part test --dataset egodex_v3 --episodes 4 --per-shard 4
+modal run deploy/modal_export.py --action teacher-videos --dataset egodex_v3
+modal run --detach deploy/modal_export.py --action export --part test --dataset egodex_v3 --every 4 --per-shard 10 --val-every 7
+modal run deploy/modal_export.py --action finalize --dataset egodex_v3
+modal run --detach deploy/modal_export.py --action upload --dataset egodex_v3
+modal run --detach deploy/modal_app.py --action train --data egodex_v3 --run egodex_v3 --overrides '{"optimizer_updates": 3000}'
+modal run deploy/modal_app.py --action demo --data egodex_v3 --run egodex_v3
 ```
 
 `part=test` vào `validation`, `part1..part5` vào `train`; `--val-every k` tách mỗi shard thứ k thành validation khi chỉ có một part. Shard đã có `entry.json` được bỏ qua khi chạy lại.
