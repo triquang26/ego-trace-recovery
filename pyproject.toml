@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "twe"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+  "torch>=2.3",
+  "numpy>=1.26",
+  "pyyaml>=6",
+  "transformers>=4.44",
+  "sentencepiece>=0.2",
+  "huggingface_hub>=1.0",
+  "av>=12",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+deploy = ["modal>=1.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
