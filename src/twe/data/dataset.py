@@ -42,6 +42,7 @@ class WorldWindowDataset(Dataset):
             "rgb": arrays["rgb"], "image_valid": arrays["image_valid"], "anchor_uv": arrays["anchor_uv"].float(),
             "anchor_mask": arrays["anchor_mask"], "instruction": reader.metas[row].get("original_instruction"),
             "trace": trace, "trace_valid": valid, "controls": controls.float(), "fit_valid": fit_valid,
+            "moving": arrays["trace_moving"] & arrays["anchor_mask"],
         }
 
 
@@ -50,5 +51,5 @@ def collate(items: list[dict]) -> tuple[WorldContext, WorldTarget]:
     rgb = stack("rgb").permute(0, 3, 1, 2).float() / 255.0
     context = WorldContext(rgb, stack("image_valid"), stack("anchor_uv"), stack("anchor_mask"),
                            [item["instruction"] for item in items])
-    target = WorldTarget(stack("controls"), stack("fit_valid"), stack("trace"), stack("trace_valid"))
+    target = WorldTarget(stack("controls"), stack("fit_valid"), stack("trace"), stack("trace_valid"), stack("moving"))
     return context, target

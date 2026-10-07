@@ -16,11 +16,15 @@ def noisy_controls(controls: Tensor, noise: Tensor, s: Tensor) -> Tensor:
     return (1 - t) * controls + t * noise
 
 
-def masked_flow_loss(velocity: Tensor, target: Tensor, mask: Tensor) -> Tensor:
+def masked_flow_loss(velocity: Tensor, target: Tensor, weight: Tensor) -> Tensor:
     error = (velocity.float() - target.float()).pow(2).sum(dim=(-1, -2))
-    weight = mask.float()
+    weight = weight.float()
     elements = velocity.shape[-1] * velocity.shape[-2]
     return (error * weight).sum() / (elements * weight.sum() + 1e-6)
+
+
+def point_weights(mask: Tensor, moving: Tensor, static_weight: float) -> Tensor:
+    return mask.float() * torch.where(moving, torch.ones_like(mask.float()), torch.full_like(mask.float(), static_weight))
 
 
 def validity_loss(logits: Tensor, target: Tensor, anchor_mask: Tensor) -> Tensor:

@@ -17,11 +17,11 @@ def predict(module, fitter, context, seed: int, steps: int) -> np.ndarray:
     return fitter.decode(controls.double()).float().cpu().numpy()
 
 
-def sample_stats(pred, trace, valid, mask, threshold) -> dict:
+def sample_stats(pred, trace, valid, mask, moving) -> dict:
     v = valid & mask[:, None]
     dist = np.linalg.norm(pred - trace, axis=-1)
     motion = np.linalg.norm(trace, axis=-1) * v
-    dynamic = motion.max(-1) > threshold
+    dynamic = moving & mask
     count = max(v.sum(), 1)
     dyn = v & dynamic[:, None]
     return {"ade": float((dist * v).sum() / count), "zero_ade": float(motion.sum() / count),
@@ -30,10 +30,10 @@ def sample_stats(pred, trace, valid, mask, threshold) -> dict:
 
 
 class DemoBuilder:
-    def __init__(self, module, fitter, dataset, sigma, device, steps: int = 4, threshold: float = 0.05):
+    def __init__(self, module, fitter, dataset, sigma, device, steps: int = 4):
         self.module, self.fitter, self.dataset = module.eval(), fitter, dataset
         self.sigma = np.asarray(sigma, dtype=np.float32)
-        self.device, self.steps, self.threshold = device, steps, threshold
+        self.device, self.steps = device, steps
 
     def context(self, index: int, instruction=...):
         item = dict(self.dataset[index])
@@ -48,7 +48,7 @@ class DemoBuilder:
             context, target, item = self.context(index)
             pred = predict(self.module, self.fitter, context, 0, self.steps)[0]
             stats = sample_stats(pred, target.trace[0].numpy(), target.trace_valid[0].numpy(),
-                                 context.anchor_mask[0].cpu().numpy(), self.threshold)
+                                 context.anchor_mask[0].cpu().numpy(), target.moving[0].numpy())
             rows.append({"index": index, "instruction": item["instruction"], **stats})
         return rows
 
@@ -66,7 +66,7 @@ class DemoBuilder:
         _, _, item = self.context(index)
         rgb = item["rgb"].numpy()
         mask = item["anchor_mask"].numpy()
-        dynamic = np.linalg.norm(item["trace"].numpy(), axis=-1).max(-1) > self.threshold
+        dynamic = item["moving"].numpy()
         panels, preds = [], []
         for title, instruction, seed in variants:
             context, _, _ = self.context(index, instruction)

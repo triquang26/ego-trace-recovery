@@ -75,3 +75,17 @@ def test_camera_reference_and_displacement():
     assert valid[1].tolist() == [True, False, False] and (disp[1, 1:] == 0).all()
     gl = np.array([[1.0, 2.0, -3.0]])
     assert np.allclose(to_opencv_camera(gl, "opengl"), [[1.0, -2.0, 3.0]])
+
+
+def test_moving_points_uses_pixel_extent():
+    from twe.preprocess.camera_reference import moving_points
+
+    k = np.array([[100.0, 0, 112], [0, 100.0, 112], [0, 0, 1]])
+    steps = np.arange(33) / 32
+    moving = np.stack([steps * 0.8, np.zeros(33), np.full(33, 2.0)], -1)
+    jitter = np.stack([np.sin(steps * 20) * 0.05, np.zeros(33), np.full(33, 2.0)], -1)
+    points = np.stack([moving, jitter])
+    valid = np.ones((2, 32), bool)
+    assert moving_points(points, valid, k, 35.0).tolist() == [True, False]
+    valid[0, 4:] = False
+    assert moving_points(points, valid, k, 35.0).tolist() == [False, False]

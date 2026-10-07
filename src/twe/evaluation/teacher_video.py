@@ -12,13 +12,12 @@ from twe.preprocess.letterbox import letterbox
 PALETTE = [(255, 59, 48), (255, 149, 0), (255, 204, 0), (52, 199, 89), (0, 199, 190), (0, 122, 255), (175, 82, 222)]
 
 
-def most_dynamic(root: Path, count: int, threshold: float = 0.05) -> list[tuple[ShardReader, int]]:
+def most_dynamic(root: Path, count: int) -> list[tuple[ShardReader, int]]:
     entries = [ShardEntry(**json.loads(path.read_text())) for path in sorted(Path(root).glob("*/entry.json"))]
     scored = []
     for entry in entries:
         reader = ShardReader(root, entry)
-        motion = np.linalg.norm(np.asarray(reader.arrays["trace"]), axis=-1) * np.asarray(reader.arrays["trace_valid"])
-        moving = (motion.max(-1) > threshold).sum(-1)
+        moving = np.asarray(reader.arrays["trace_moving"]).sum(-1)
         for row in range(len(reader)):
             scored.append((int(moving[row]), reader.metas[row].get("task", ""), reader, row))
     scored.sort(key=lambda item: -item[0])
@@ -33,13 +32,12 @@ def most_dynamic(root: Path, count: int, threshold: float = 0.05) -> list[tuple[
 
 
 def render_window(reader: ShardReader, row: int, frames: np.ndarray, times: np.ndarray, size: int, path: Path,
-                  threshold: float = 0.05, upscale: int = 2) -> dict:
+                  upscale: int = 2) -> dict:
     arrays = {key: np.asarray(value[row]) for key, value in reader.arrays.items()}
     meta = reader.metas[row]
     pixels = project(arrays["anchor_xyz"], arrays["trace"], arrays["intrinsics"]) * upscale
     valid = np.concatenate([np.ones((len(pixels), 1), bool), arrays["trace_valid"]], 1) & arrays["anchor_mask"][:, None]
-    motion = np.linalg.norm(arrays["trace"], axis=-1) * arrays["trace_valid"]
-    dynamic = motion.max(-1) > threshold
+    dynamic = arrays["trace_moving"]
     offsets = np.concatenate([[0.0], meta["future_offsets_seconds"]])
     base = Image.fromarray(arrays["rgb"]).resize((size * upscale, size * upscale))
     images = []

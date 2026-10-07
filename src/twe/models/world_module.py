@@ -37,8 +37,9 @@ class WorldModule(nn.Module):
     def select_anchors(self, rgb: Tensor, image_valid: Tensor) -> tuple[Tensor, Tensor]:
         with torch.no_grad():
             patches = self.visual_encoder(rgb).float()
-        return select_anchors(patches, image_valid, self.cfg.num_anchors, self.cfg.spatial_coverage_anchors,
-                              self.cfg.anchor_min_distance)
+        return select_anchors(patches, image_valid, self.cfg.num_anchors, self.cfg.anchor_entities,
+                              self.cfg.anchor_min_per_entity, self.cfg.anchor_spatial_weight,
+                              self.cfg.anchor_area_power)
 
     @torch.no_grad()
     def extract_features(self, rgb: Tensor, image_valid: Tensor, instructions: list[str | None]) -> WorldFeatures:

@@ -26,62 +26,85 @@ def sample_anchor_features(patch_features: Tensor, uv: Tensor) -> Tensor:
     return sampled[..., 0].transpose(1, 2)
 
 
-def _grid_shape(count: int, aspect: float) -> tuple[int, int]:
-    pairs = [(rows, count // rows) for rows in range(1, count + 1) if count % rows == 0]
-    return min(pairs, key=lambda pair: abs(pair[1] / pair[0] - aspect))
-
-
-def _coverage(valid: Tensor, count: int) -> Tensor:
-    size_y, size_x = valid.shape
-    ys = torch.nonzero(valid.any(dim=1)).flatten()
-    xs = torch.nonzero(valid.any(dim=0)).flatten()
-    x0, x1 = xs[0].item() / size_x, (xs[-1].item() + 1) / size_x
-    y0, y1 = ys[0].item() / size_y, (ys[-1].item() + 1) / size_y
-    rows, cols = _grid_shape(count, (x1 - x0) / max(y1 - y0, 1e-6))
-    gx = x0 + (torch.arange(cols, dtype=torch.float32) + 0.5) / cols * (x1 - x0)
-    gy = y0 + (torch.arange(rows, dtype=torch.float32) + 0.5) / rows * (y1 - y0)
-    yy, xx = torch.meshgrid(gy, gx, indexing="ij")
-    return torch.stack([xx.flatten(), yy.flatten()], dim=-1)
-
-
-def _diversity(features: Tensor, weight: Tensor, chosen_uv: Tensor, count: int, min_distance: float) -> Tensor:
-    grid = features.shape[0]
-    centers = (torch.arange(grid, dtype=torch.float32) + 0.5) / grid
+def candidate_grid(image_valid: Tensor, resolution: int) -> tuple[Tensor, Tensor]:
+    centers = (torch.arange(resolution, dtype=torch.float32) + 0.5) / resolution
     yy, xx = torch.meshgrid(centers, centers, indexing="ij")
-    cand_uv = torch.stack([xx.flatten(), yy.flatten()], dim=-1)
-    cand_desc = F.normalize(features.reshape(grid * grid, -1).float(), dim=-1)
-    alive = weight.flatten() >= 1.0
-    alive &= torch.cdist(cand_uv, chosen_uv).min(dim=1).values >= min_distance
-    chosen_desc = F.normalize(sample_anchor_features(features[None].float(), chosen_uv[None])[0], dim=-1)
-    nearest = 1 - (cand_desc @ chosen_desc.T).max(dim=1).values
-    picked = []
-    for _ in range(count):
-        if not alive.any():
-            break
-        score = torch.where(alive, nearest, torch.full_like(nearest, -float("inf")))
-        index = int(torch.argmax(score))
+    uv = torch.stack([xx.flatten(), yy.flatten()], dim=-1)
+    kernel = image_valid.shape[-1] // resolution
+    cell = F.avg_pool2d(image_valid[None, None].float(), kernel)
+    interior = -F.max_pool2d(-cell, 3, stride=1, padding=1)
+    return uv, interior[0, 0].flatten() >= 1.0
+
+
+def farthest_init(points: Tensor, count: int, start: int) -> Tensor:
+    picked = [start]
+    nearest = (points - points[start]).norm(dim=-1)
+    for _ in range(count - 1):
+        index = int(torch.argmax(nearest))
         picked.append(index)
-        alive &= torch.linalg.norm(cand_uv - cand_uv[index], dim=-1) >= min_distance
-        nearest = torch.minimum(nearest, 1 - cand_desc @ cand_desc[index])
-    if not picked:
-        return cand_uv[:0]
-    return cand_uv[torch.tensor(picked)]
+        nearest = torch.minimum(nearest, (points - points[index]).norm(dim=-1))
+    return points[torch.tensor(picked)].clone()
+
+
+def lloyd(points: Tensor, centers: Tensor, iterations: int) -> Tensor:
+    for _ in range(iterations):
+        labels = torch.cdist(points, centers).argmin(dim=1)
+        for k in range(len(centers)):
+            members = points[labels == k]
+            if len(members):
+                centers[k] = members.mean(dim=0)
+    return centers
+
+
+def kmeans(points: Tensor, clusters: int, iterations: int) -> Tensor:
+    centers = farthest_init(points, min(clusters, len(points)), int(torch.argmax(points.norm(dim=-1))))
+    return torch.cdist(points, lloyd(points, centers, iterations)).argmin(dim=1)
+
+
+def entity_quotas(sizes: Tensor, total: int, minimum: int, power: float) -> Tensor:
+    weight = sizes.float().pow(power)
+    quota = torch.minimum(torch.clamp(torch.floor(total * weight / weight.sum()), min=minimum), sizes.float())
+    quota = quota.long()
+    while quota.sum() > total:
+        quota[int(torch.argmax(torch.where(quota > 1, quota, torch.zeros_like(quota))))] -= 1
+    while quota.sum() < total and bool((quota < sizes).any()):
+        spare = torch.where(quota < sizes, weight / (quota + 1).float(), torch.full_like(weight, -1.0))
+        quota[int(torch.argmax(spare))] += 1
+    return quota
+
+
+def spread_points(uv: Tensor, count: int, iterations: int) -> Tensor:
+    start = int(torch.argmin((uv - uv.mean(dim=0)).norm(dim=-1)))
+    centers = lloyd(uv, farthest_init(uv, count, start), iterations)
+    taken = torch.zeros(len(uv), dtype=torch.bool)
+    picked = []
+    for center in centers:
+        distance = torch.where(taken, torch.full((len(uv),), float("inf")), (uv - center).norm(dim=-1))
+        index = int(torch.argmin(distance))
+        taken[index] = True
+        picked.append(index)
+    return uv[torch.tensor(picked)]
 
 
 @torch.no_grad()
-def select_anchors(
-    patch_features: Tensor, image_valid: Tensor, num_anchors: int, coverage: int, min_distance: float
-) -> tuple[Tensor, Tensor]:
-    batch = patch_features.shape[0]
-    weight = patch_validity(image_valid, patch_features.shape[1]).cpu()
+def select_anchors(patch_features: Tensor, image_valid: Tensor, num_anchors: int, entities: int,
+                   min_per_entity: int, spatial_weight: float, area_power: float,
+                   iterations: int = 10) -> tuple[Tensor, Tensor]:
+    batch, grid = patch_features.shape[:2]
     features = patch_features.detach().float().cpu()
     valid = image_valid.cpu().bool()
     uv = torch.zeros(batch, num_anchors, 2)
     mask = torch.zeros(batch, num_anchors, dtype=torch.bool)
     for b in range(batch):
-        grid_uv = _coverage(valid[b], coverage)
-        extra = _diversity(features[b], weight[b], grid_uv, num_anchors - coverage, min_distance)
-        points = torch.cat([grid_uv, extra])
-        uv[b, : len(points)] = points
-        mask[b, : len(points)] = True
+        cand_uv, alive = candidate_grid(valid[b], grid * 2)
+        cand_uv = cand_uv[alive]
+        desc = F.normalize(sample_anchor_features(features[b : b + 1], cand_uv[None])[0], dim=-1)
+        labels = kmeans(torch.cat([desc, spatial_weight * cand_uv], dim=-1), entities, iterations)
+        present = torch.unique(labels)
+        sizes = torch.stack([(labels == k).sum() for k in present])
+        quotas = entity_quotas(sizes, min(num_anchors, len(cand_uv)), min_per_entity, area_power)
+        chosen = torch.cat([spread_points(cand_uv[labels == k], int(q), iterations)
+                            for k, q in zip(present, quotas) if q > 0])
+        uv[b, : len(chosen)] = chosen
+        mask[b, : len(chosen)] = True
     return uv.to(patch_features.device), mask.to(patch_features.device)

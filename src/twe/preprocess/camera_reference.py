@@ -25,6 +25,19 @@ def robust_scene_scale(depth: np.ndarray, min_count: int = 64) -> float | None:
     return float(np.median(values))
 
 
+def moving_points(points_camera: np.ndarray, valid: np.ndarray, intrinsics: np.ndarray | None,
+                  threshold_px: float) -> np.ndarray:
+    if intrinsics is None or not np.isfinite(intrinsics).all():
+        return np.zeros(len(points_camera), dtype=bool)
+    z = np.clip(points_camera[..., 2], 1e-6, None)
+    pixels = np.stack([intrinsics[0, 0] * points_camera[..., 0] / z + intrinsics[0, 2],
+                       intrinsics[1, 1] * points_camera[..., 1] / z + intrinsics[1, 2]], -1)
+    keep = np.concatenate([np.ones((len(valid), 1), bool), valid], 1)
+    pixels = np.where(keep[..., None], np.nan_to_num(pixels), np.nan)
+    low, high = np.nanmin(pixels, axis=1), np.nanmax(pixels, axis=1)
+    return np.nan_to_num(np.linalg.norm(high - low, axis=-1)) >= threshold_px
+
+
 def relative_displacements(
     points_camera: np.ndarray, reliability: np.ndarray, scale: float, reliability_threshold: float
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:

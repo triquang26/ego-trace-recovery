@@ -17,8 +17,10 @@ class WorldConfig:
     text_dim: int = 512
     text_max_length: int = 64
     num_anchors: int = 64
-    spatial_coverage_anchors: int = 32
-    anchor_min_distance: float = 0.04
+    anchor_entities: int = 12
+    anchor_min_per_entity: int = 3
+    anchor_spatial_weight: float = 0.5
+    anchor_area_power: float = 0.35
     width: int = 512
     layers: int = 8
     heads: int = 8
@@ -59,7 +61,7 @@ class Stage1Config:
     fit_min_valid_steps: int = 10
     fit_max_condition: float = 1e5
     reliability_threshold: float = 0.5
-    dynamic_threshold: float = 0.05
+    static_point_weight: float = 0.5
     mixture: dict[str, float] = field(default_factory=dict)
     num_workers: int = 8
     log_every: int = 50

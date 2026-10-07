@@ -15,8 +15,8 @@ def dino_selector(visual_encoder: torch.nn.Module, cfg: WorldConfig, device: str
     def select(rgb: torch.Tensor, valid: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         with torch.no_grad():
             patches = visual_encoder(rgb.to(device)).float()
-        return select_anchors(patches, valid.to(device), cfg.num_anchors, cfg.spatial_coverage_anchors,
-                              cfg.anchor_min_distance)
+        return select_anchors(patches, valid.to(device), cfg.num_anchors, cfg.anchor_entities,
+                              cfg.anchor_min_per_entity, cfg.anchor_spatial_weight, cfg.anchor_area_power)
 
     return select
 

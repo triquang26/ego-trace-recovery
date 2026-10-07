@@ -32,7 +32,7 @@ def evaluate(module, dataset, cfg: Stage1Config, fitter, device, autocast) -> di
         batches += 1
         pred = fitter.decode(controls.double()).float()
         mask = context.anchor_mask[..., None].expand_as(target.trace_valid)
-        stats = {**trace_errors(pred, target, context.anchor_mask, cfg.dynamic_threshold),
+        stats = {**trace_errors(pred, target, context.anchor_mask),
                  **reconstruction_error(fitter, target, context.anchor_mask),
                  **validity_calibration(outputs.validity_logits, target.trace_valid, mask)}
         for key, value in stats.items():

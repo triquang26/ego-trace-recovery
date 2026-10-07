@@ -9,8 +9,10 @@ pooled_grid: 8
 text_dim: 512
 text_max_length: 64
 num_anchors: 64
-spatial_coverage_anchors: 32
-anchor_min_distance: 0.04
+anchor_entities: 12
+anchor_min_per_entity: 3
+anchor_spatial_weight: 0.5
+anchor_area_power: 0.35
 width: 512
 layers: 8
 heads: 8

@@ -7,8 +7,8 @@ import torch
 from twe.config import WorldConfig
 from twe.contracts import COORDINATE_CONTRACT
 from twe.data.shards import ShardWriter
-from twe.preprocess.camera_reference import (relative_displacements, robust_scene_scale, to_opencv_camera,
-                                             world_to_reference_camera)
+from twe.preprocess.camera_reference import (moving_points, relative_displacements, robust_scene_scale,
+                                             to_opencv_camera, world_to_reference_camera)
 from twe.preprocess.letterbox import letterbox, uv_to_source_xy
 from twe.preprocess.chunking import Chunk, plan_chunks, window_starts
 from twe.preprocess.teacher import TeacherTracks, TrackTeacher
@@ -35,6 +35,7 @@ class ExportSettings:
     reliability_threshold: float = 0.5
     geometry_provenance: str = "estimated"
     chunk_seconds: float = 10.0
+    moving_threshold_px: float = 35.0
 
 
 def letterbox_intrinsics(intrinsics: np.ndarray | None, transform) -> np.ndarray:
@@ -72,7 +73,9 @@ def window_record(recording: Recording, chunk: Chunk, query: dict, rows: slice, 
     trace_valid &= mask[:, None]
     anchor_xyz = np.where(np.isfinite(camera[:, 0]), camera[:, 0] / scale, 0.0).astype(np.float32)
     k = None if tracks.intrinsics is None else tracks.intrinsics[s]
-    arrays = {"anchor_xyz": anchor_xyz, "intrinsics": letterbox_intrinsics(k, query["transform"]),
+    intrinsics = letterbox_intrinsics(k, query["transform"])
+    moving = moving_points(camera, trace_valid, intrinsics, settings.moving_threshold_px) & mask
+    arrays = {"anchor_xyz": anchor_xyz, "intrinsics": intrinsics, "trace_moving": moving,
               "rgb": query["rgb"], "image_valid": query["valid"], "anchor_uv": query["uv"], "anchor_mask": mask,
               "trace": trace, "trace_valid": trace_valid, "trace_reliability": trace_reliability * trace_valid}
     meta = {

@@ -15,7 +15,7 @@ from twe.preprocess.bspline_targets import BSplineTargets
 from twe.preprocess.normalizer import load_normalizer
 from twe.training.checkpoint import save_world, world_artifact
 from twe.training.evaluate import evaluate
-from twe.training.objective import (masked_flow_loss, noisy_controls, sample_flow_time, validity_loss,
+from twe.training.objective import (masked_flow_loss, noisy_controls, point_weights, sample_flow_time, validity_loss,
                                     warmup_cosine)
 
 
@@ -49,8 +49,8 @@ def train_step(module, context, target, cfg: Stage1Config, autocast) -> dict[str
         s = sample_flow_time(target.controls.shape[0], cfg.endpoint_time_probability, target.controls.device)
         noise = torch.randn_like(target.controls)
         outputs = module(inputs, noisy_controls(target.controls, noise, s), s)
-    mask = context.anchor_mask & target.fit_valid
-    flow = masked_flow_loss(outputs.velocity, noise - target.controls, mask)
+    weight = point_weights(context.anchor_mask & target.fit_valid, target.moving, cfg.static_point_weight)
+    flow = masked_flow_loss(outputs.velocity, noise - target.controls, weight)
     valid = validity_loss(outputs.validity_logits, target.trace_valid, context.anchor_mask)
     return {"loss": flow + cfg.validity_loss_weight * valid, "flow": flow, "validity": valid}
 

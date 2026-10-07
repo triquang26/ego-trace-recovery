@@ -6,7 +6,7 @@ import numpy as np
 
 from twe.data.manifest import ShardEntry
 
-ARRAY_KEYS = ("rgb", "anchor_xyz", "intrinsics", "image_valid", "anchor_uv", "anchor_mask", "trace", "trace_valid", "trace_reliability")
+ARRAY_KEYS = ("rgb", "anchor_xyz", "intrinsics", "trace_moving", "image_valid", "anchor_uv", "anchor_mask", "trace", "trace_valid", "trace_reliability")
 
 
 class ShardWriter:

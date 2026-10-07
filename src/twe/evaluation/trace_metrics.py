@@ -5,11 +5,11 @@ from twe.contracts import WorldTarget
 from twe.preprocess.bspline_targets import BSplineTargets
 
 
-def trace_errors(pred: Tensor, target: WorldTarget, anchor_mask: Tensor, dynamic_threshold: float) -> dict[str, Tensor]:
+def trace_errors(pred: Tensor, target: WorldTarget, anchor_mask: Tensor) -> dict[str, Tensor]:
     valid = target.trace_valid & anchor_mask[..., None]
     distance = torch.linalg.norm(pred.float() - target.trace.float(), dim=-1)
     motion = torch.where(valid, torch.linalg.norm(target.trace.float(), dim=-1), torch.zeros_like(distance))
-    dynamic = motion.amax(-1) > dynamic_threshold
+    dynamic = target.moving & anchor_mask
     last = valid[..., -1]
     stats = {
         "ade_sum": (distance * valid).sum(), "ade_count": valid.sum(),

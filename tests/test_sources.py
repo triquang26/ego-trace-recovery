@@ -48,7 +48,7 @@ def test_egodex_recordings_use_selected_description(tmp_path):
 
 
 def test_manifest_collect_reads_shard_entries(tmp_path):
-    arrays = {"anchor_xyz": np.zeros((2, 3)), "intrinsics": np.eye(3), "rgb": np.zeros((4, 4, 3)), "image_valid": np.ones((4, 4), bool), "anchor_uv": np.zeros((2, 2)),
+    arrays = {"anchor_xyz": np.zeros((2, 3)), "intrinsics": np.eye(3), "trace_moving": np.zeros(2, bool), "rgb": np.zeros((4, 4, 3)), "image_valid": np.ones((4, 4), bool), "anchor_uv": np.zeros((2, 2)),
               "anchor_mask": np.ones(2, bool), "trace": np.zeros((2, 3, 3)), "trace_valid": np.ones((2, 3), bool),
               "trace_reliability": np.ones((2, 3))}
     for name, split in (("a", "train"), ("b", "validation")):
