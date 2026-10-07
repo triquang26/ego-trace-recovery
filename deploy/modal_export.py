@@ -92,6 +92,33 @@ def finalize(dataset: str) -> dict:
     return {"shards": len(manifest.shards), "windows": sum(e.count for e in manifest.shards), **record}
 
 
+@app.function(image=teacher_image, volumes={VOLUME_PATH: volume}, timeout=3600, cpu=8, memory=32768)
+def teacher_videos(dataset: str, count: int = 8, frame_step: int = 2) -> list[dict]:
+    import numpy as np
+
+    from twe.data.egodex import egodex_recording
+    from twe.evaluation.teacher_video import most_dynamic, render_window, write_index
+
+    volume.reload()
+    root = VOLUME_PATH / "data" / dataset
+    out = VOLUME_PATH / "viz" / dataset / "teacher"
+    out.mkdir(parents=True, exist_ok=True)
+    records = []
+    for n, (reader, row) in enumerate(most_dynamic(root, count)):
+        meta = reader.metas[row]
+        part, task, index = meta["recording_id"].split("/")
+        raw = VOLUME_PATH / "raw" / "egodex" / part / task
+        recording = egodex_recording(part, task, raw / f"{index}.hdf5", raw / f"{index}.mp4", frame_step)
+        start = int(np.argmin(np.abs(recording.timestamps - meta["current_timestamp_seconds"])))
+        stop = int(np.searchsorted(recording.timestamps, meta["current_timestamp_seconds"] + 2.0, side="right"))
+        frames = recording.read_frames(np.arange(start, stop))
+        times = recording.timestamps[start:stop] - recording.timestamps[start]
+        records.append(render_window(reader, row, frames, times, 224, out / f"teacher_{n}.gif"))
+    write_index(out, records)
+    volume.commit()
+    return records
+
+
 @app.local_entrypoint()
 def main(action: str = "export", part: str = "test", dataset: str = "egodex_v1", split: str = "",
          start: int = 0, episodes: int = 0, per_shard: int = 16, stride: float = 1.0, val_every: int = 0,
@@ -110,6 +137,9 @@ def main(action: str = "export", part: str = "test", dataset: str = "egodex_v1",
                 for sp, s in zip(splits, starts)]
         for result in export_egodex.starmap(args):
             print(result)
+    elif action == "teacher-videos":
+        for record in teacher_videos.remote(dataset):
+            print(record)
     elif action == "finalize":
         print(finalize.remote(dataset))
     else:
