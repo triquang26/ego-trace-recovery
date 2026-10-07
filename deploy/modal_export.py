@@ -24,7 +24,7 @@ teacher_image = (
                  "prettytable", "huggingface_hub<1.0", "transformers>=4.44,<5", "sentencepiece", "h5py", "av>=12",
                  "pyyaml", "numpy<2",
                  "git+https://github.com/EasternJournalist/utils3d.git@d3a577acf0a9ad7e513a1416449a07b6f47d967f")
-    .env({"HF_HOME": "/vol/hf_cache", "PYTHONPATH": SPATRACKER, "PYTHONUNBUFFERED": "1"})
+    .env({"HF_HOME": "/root/hf_cache", "PYTHONPATH": SPATRACKER, "PYTHONUNBUFFERED": "1"})
     .add_local_python_source("twe")
 )
 app = modal.App("trace-world-expert-export")
@@ -47,7 +47,8 @@ def download_egodex(part: str) -> str:
     return str(target / part)
 
 
-@app.function(image=teacher_image, gpu=GPU, volumes={VOLUME_PATH: volume}, timeout=24 * 3600, cpu=8, memory=65536)
+@app.function(image=teacher_image, gpu=GPU, volumes={VOLUME_PATH: volume}, timeout=24 * 3600, cpu=8, memory=65536,
+              max_containers=16)
 def export_egodex(dataset: str, part: str, split: str, start: int, count: int, stride: float,
                   every: int = 1, frame_step: int = 2, chunk_seconds: float = 10.0) -> dict:
     from twe.config import WorldConfig
@@ -58,15 +59,18 @@ def export_egodex(dataset: str, part: str, split: str, start: int, count: int, s
     from twe.preprocess.spatracker_teacher import load_spatracker
 
     volume.reload()
+    name = f"egodex-{part}-{start:06d}"
+    root = VOLUME_PATH / "data" / dataset
+    if (root / name / "entry.json").exists():
+        return {"shard": name, "cached": True}
     cfg = WorldConfig()
     visual = DinoVisualEncoder(cfg.visual_encoder, cfg.visual_encoder_revision, cfg.patch_grid).to("cuda")
     teacher = load_spatracker("cuda")
     recordings = egodex_recordings(VOLUME_PATH / "raw" / "egodex" / part, start, count, frame_step, every)
-    root = VOLUME_PATH / "data" / dataset
     root.mkdir(parents=True, exist_ok=True)
     settings = ExportSettings(chunk_seconds=chunk_seconds)
     report = export_shard(recordings, teacher, dino_selector(visual, cfg, "cuda"), cfg, settings, root,
-                          f"egodex-{part}-{start:06d}", "human_nominal", split, stride)
+                          name, "human_nominal", split, stride)
     volume.commit()
     return {k: v for k, v in report.items() if k != "skipped"} | {"skipped": len(report.get("skipped", []))}
 
