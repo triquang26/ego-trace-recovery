@@ -55,6 +55,7 @@ class DemoBuilder:
             mask = context.anchor_mask[0].cpu().numpy()
             stats = sample_stats(preds[0], trace, valid, mask, target.moving[0].numpy())
             stats["min_ade"] = min_ade(preds, trace, valid & mask[:, None])
+            stats["mean_ade"] = sample_stats(preds.mean(0), trace, valid, mask, target.moving[0].numpy())["ade"]
             rows.append({"index": index, "instruction": item["instruction"], **stats})
         return rows
 
@@ -102,7 +103,7 @@ def build_demo(builder: DemoBuilder, out: Path, count: int = 200, seed: int = 0)
     for n, row in enumerate(ranked[:2]):
         builder.render(out, f"seeds_{n}", row["index"], [(f"seed {s}", ..., s) for s in range(3)], False)
         cases.append({"image": f"seeds_{n}.png", "group": "seeds", **row})
-    keys = ("ade", "min_ade", "zero_ade", "dynamic_ade", "pred_motion")
+    keys = ("ade", "mean_ade", "min_ade", "zero_ade", "dynamic_ade", "pred_motion")
     summary = {key: float(np.mean([r[key] for r in rows])) for key in keys}
     record = {"summary": summary, "scanned": len(rows), "cases": cases}
     (out / "demo.json").write_text(json.dumps(record, indent=2))
