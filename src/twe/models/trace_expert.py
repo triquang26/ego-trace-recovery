@@ -42,7 +42,7 @@ class TraceExpert(nn.Module):
         self.feature_proj = nn.Linear(cfg.visual_dim, width)
         self.uv_proj = nn.Linear(2 + 4 * cfg.uv_frequencies, width)
         self.time_embed = TimeEmbedding(cfg.time_embedding_dim, width)
-        self.blocks = nn.ModuleList(TraceBlock(width, cfg.heads, cfg.ffn_width) for _ in range(cfg.layers))
+        self.blocks = nn.ModuleList(TraceBlock(width, cfg.heads, cfg.ffn_width, cfg.dropout) for _ in range(cfg.layers))
         self.norm = nn.LayerNorm(width)
         self.velocity_head = Head(width, cfg.free_control_points * 3)
         self.validity_head = Head(width, cfg.future_steps)

@@ -20,8 +20,9 @@ class Attention(nn.Module):
 
 
 class TraceBlock(nn.Module):
-    def __init__(self, width: int, heads: int, ffn_width: int):
+    def __init__(self, width: int, heads: int, ffn_width: int, dropout: float = 0.0):
         super().__init__()
+        self.drop = nn.Dropout(dropout)
         self.norm_self = nn.LayerNorm(width)
         self.self_attn = Attention(width, heads)
         self.norm_cross = nn.LayerNorm(width)
@@ -31,9 +32,9 @@ class TraceBlock(nn.Module):
 
     def forward(self, x: Tensor, point_mask: Tensor, context: Tensor, context_mask: Tensor) -> Tensor:
         h = self.norm_self(x)
-        x = x + self.self_attn(h, h, point_mask).float()
-        x = x + self.cross_attn(self.norm_cross(x), context, context_mask).float()
-        return x + self.ffn(self.norm_ffn(x)).float()
+        x = x + self.drop(self.self_attn(h, h, point_mask).float())
+        x = x + self.drop(self.cross_attn(self.norm_cross(x), context, context_mask).float())
+        return x + self.drop(self.ffn(self.norm_ffn(x)).float())
 
 
 class Head(nn.Module):

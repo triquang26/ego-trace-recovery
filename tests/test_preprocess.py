@@ -108,3 +108,13 @@ def test_relabel_moving_rewrites_labels(tmp_path):
     loose = relabel_moving(root, 1.0)
     strict = relabel_moving(root, 1e6)
     assert loose > 0 and strict == 0
+
+
+def test_stage1_overrides_reach_world_config():
+    from pathlib import Path
+
+    from twe.config import load_stage1_config
+
+    root = Path(__file__).resolve().parent.parent
+    cfg = load_stage1_config(root / "configs/stage1.yaml", {"world.dropout": 0.1, "optimizer_updates": 7})
+    assert cfg.world.dropout == 0.1 and cfg.optimizer_updates == 7

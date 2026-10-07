@@ -63,7 +63,7 @@ def export_egodex(dataset: str, part: str, split: str, start: int, count: int, s
     from twe.preprocess.spatracker_teacher import load_spatracker
 
     volume.reload()
-    name = f"egodex-{part}-{start:06d}"
+    name = f"egodex-{part}-e{every}-{start:06d}"
     root = VOLUME_PATH / "data" / dataset
     if (root / name / "entry.json").exists():
         return {"shard": name, "cached": True}

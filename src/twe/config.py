@@ -27,6 +27,7 @@ class WorldConfig:
     layers: int = 8
     heads: int = 8
     ffn_width: int = 2048
+    dropout: float = 0.0
     horizon_seconds: float = 2.0
     future_steps: int = 32
     bspline_degree: int = 3
@@ -94,11 +95,15 @@ def load_world_config(path: str | Path) -> WorldConfig:
 def load_stage1_config(path: str | Path, overrides: dict | None = None) -> Stage1Config:
     path = Path(path)
     values = yaml.safe_load(path.read_text())
-    values.update(overrides or {})
+    overrides = dict(overrides or {})
+    world_overrides = {k.split(".", 1)[1]: overrides.pop(k) for k in list(overrides) if k.startswith("world.")}
+    values.update(overrides)
     world_ref = values.pop("world")
     world_path = Path(world_ref)
     if not world_path.is_absolute() and not world_path.exists():
         world_path = path.parent.parent / world_ref
-    values["world"] = load_world_config(world_path)
+    world = yaml.safe_load(world_path.read_text())
+    world.update(world_overrides)
+    values["world"] = _build(WorldConfig, world)
     values["betas"] = tuple(values.get("betas", (0.9, 0.95)))
     return _build(Stage1Config, values)
