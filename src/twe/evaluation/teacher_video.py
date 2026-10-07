@@ -2,14 +2,13 @@ import json
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image
 
 from twe.data.manifest import ShardEntry
 from twe.data.shards import ShardReader
-from twe.evaluation.demo_render import project
+from twe.evaluation.demo_render import project, shared_extent
+from twe.evaluation.trace_style import absolute_points, draw_paths, grayscale, hstack, titled, top_down
 from twe.preprocess.letterbox import letterbox
-
-PALETTE = [(255, 59, 48), (255, 149, 0), (255, 204, 0), (52, 199, 89), (0, 199, 190), (0, 122, 255), (175, 82, 222)]
 
 
 def most_dynamic(root: Path, count: int) -> list[tuple[ShardReader, int]]:
@@ -35,33 +34,24 @@ def render_window(reader: ShardReader, row: int, frames: np.ndarray, times: np.n
                   upscale: int = 2) -> dict:
     arrays = {key: np.asarray(value[row]) for key, value in reader.arrays.items()}
     meta = reader.metas[row]
+    rows = np.flatnonzero(arrays["trace_moving"] & arrays["anchor_mask"])
     pixels = project(arrays["anchor_xyz"], arrays["trace"], arrays["intrinsics"]) * upscale
-    valid = np.concatenate([np.ones((len(pixels), 1), bool), arrays["trace_valid"]], 1) & arrays["anchor_mask"][:, None]
-    dynamic = arrays["trace_moving"]
+    points, keep = absolute_points(arrays["anchor_xyz"], arrays["trace"], arrays["trace_valid"])
+    extent = shared_extent([(points, keep)], rows)
     offsets = np.concatenate([[0.0], meta["future_offsets_seconds"]])
-    base = Image.fromarray(arrays["rgb"]).resize((size * upscale, size * upscale))
+    side = size * upscale
+    base = grayscale(Image.fromarray(arrays["rgb"]).resize((side, side)))
     images = []
     for frame, time in zip(frames, times):
-        left = Image.fromarray(letterbox(frame, size)[0]).resize(base.size)
-        right = base.copy()
-        draw = ImageDraw.Draw(right)
         upto = int(np.searchsorted(offsets, time, side="right"))
-        for i in np.nonzero(arrays["anchor_mask"])[0]:
-            keep = [tuple(p) for p, ok in zip(pixels[i, :upto], valid[i, :upto]) if ok]
-            color = PALETTE[i % len(PALETTE)] if dynamic[i] else (200, 200, 200)
-            if len(keep) > 1:
-                draw.line(keep, fill=color, width=3 if dynamic[i] else 1)
-            x, y = pixels[i, 0]
-            draw.ellipse([x - 2, y - 2, x + 2, y + 2], fill=(255, 255, 255))
-        canvas = Image.new("RGB", (base.width * 2 + 8, base.height + 28), (20, 20, 20))
-        canvas.paste(left, (0, 28))
-        canvas.paste(right, (base.width + 8, 28))
-        ImageDraw.Draw(canvas).text((6, 6), f"t+{time:.2f}s  {(meta.get('original_instruction') or '')[:90]}",
-                                    fill=(255, 255, 255))
-        images.append(canvas)
+        video = Image.fromarray(letterbox(frame, size)[0]).resize((side, side))
+        teacher = draw_paths(base.copy(), pixels, keep, rows, upto)
+        sheet = hstack([titled(video, f"video t+{time:.2f}s"), titled(teacher, f"teacher, {len(rows)} moving points"),
+                        titled(top_down(points, keep, rows, upto, side, extent), "teacher x-z")])
+        images.append(titled(sheet, (meta.get("original_instruction") or "")[:150], 26))
     images[0].save(path, save_all=True, append_images=images[1:], duration=120, loop=0)
     return {"file": path.name, "sample_id": meta["sample_id"], "instruction": meta.get("original_instruction"),
-            "dynamic_points": int(dynamic.sum()), "valid_fraction": float(arrays["trace_valid"].mean())}
+            "dynamic_points": int(len(rows)), "valid_fraction": float(arrays["trace_valid"].mean())}
 
 
 def write_index(out: Path, records: list[dict]) -> None:

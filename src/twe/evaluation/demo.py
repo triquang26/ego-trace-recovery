@@ -5,10 +5,7 @@ import numpy as np
 import torch
 
 from twe.data.dataset import collate
-from twe.evaluation.demo_render import project, render_case
-
-PRED, TEACHER = "#ff3b30", "#34c759"
-
+from twe.evaluation.demo_render import render_case
 
 @torch.no_grad()
 def predict(module, fitter, context, seed: int, steps: int) -> np.ndarray:
@@ -52,28 +49,20 @@ class DemoBuilder:
             rows.append({"index": index, "instruction": item["instruction"], **stats})
         return rows
 
-    def paths(self, item: dict, pred: np.ndarray, with_teacher: bool) -> dict:
-        xyz, k = item["anchor_xyz"].numpy(), item["intrinsics"].numpy()
-        valid = item["trace_valid"].numpy()
-        out = {"model": (project(xyz, pred * self.sigma, k), np.ones_like(valid), PRED)}
-        if with_teacher:
-            out["teacher"] = (project(xyz, item["trace"].numpy() * self.sigma, k), valid, TEACHER)
-        return out
-
     def render(self, out: Path, name: str, index: int, variants: list[tuple[str, object, int]], teacher: bool):
         _, _, item = self.context(index)
-        rgb = item["rgb"].numpy()
-        mask = item["anchor_mask"].numpy()
-        dynamic = item["moving"].numpy()
-        panels, preds = [], []
+        rows = np.flatnonzero(item["anchor_mask"].numpy())
+        valid = item["trace_valid"].numpy()
+        panels = [("Teacher", item["trace"].numpy() * self.sigma, valid)] if teacher else []
+        preds = []
         for title, instruction, seed in variants:
             context, _, _ = self.context(index, instruction)
             pred = predict(self.module, self.fitter, context, seed, self.steps)[0]
             preds.append(pred)
-            panels.append({"paths": self.paths(item, pred, teacher), "mask": mask, "title": title,
-                           "dynamic": dynamic})
+            panels.append((title, pred * self.sigma, np.ones_like(valid)))
         meta = self.dataset.meta(index)
-        render_case(out / f"{name}.png", rgb, panels, f"{meta['sample_id']}")
+        render_case(out / f"{name}.png", item["rgb"].numpy(), item["anchor_xyz"].numpy(), item["intrinsics"].numpy(),
+                    panels, rows, f"{meta['sample_id']} | {item['instruction'] or 'no instruction'}")
         return preds
 
 
@@ -90,7 +79,7 @@ def build_demo(builder: DemoBuilder, out: Path, count: int = 200, seed: int = 0)
     for group, chosen in picks.items():
         for n, row in enumerate(chosen):
             name = f"{group}_{n}"
-            builder.render(out, name, row["index"], [(f"model vs teacher | {row['instruction']}", ..., 0)], True)
+            builder.render(out, name, row["index"], [("Model", ..., 0)], True)
             cases.append({"image": f"{name}.png", "group": group, **row})
     others = [r["instruction"] for r in with_text]
     for n, row in enumerate(ranked[: len(ranked) // 2][:4]):

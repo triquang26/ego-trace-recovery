@@ -1,4 +1,7 @@
 import numpy as np
+from PIL import Image
+
+from twe.evaluation.trace_style import absolute_points, draw_paths, grayscale, hstack, titled, top_down
 
 
 def project(anchor_xyz: np.ndarray, trace: np.ndarray, intrinsics: np.ndarray) -> np.ndarray:
@@ -9,33 +12,28 @@ def project(anchor_xyz: np.ndarray, trace: np.ndarray, intrinsics: np.ndarray) -
     return np.stack([u, v], -1)
 
 
-def draw_panel(ax, rgb, paths: dict, mask, title: str, dynamic=None) -> None:
-    ax.imshow(rgb)
-    ax.set_xlim(0, rgb.shape[1])
-    ax.set_ylim(rgb.shape[0], 0)
-    ax.axis("off")
-    ax.set_title(title, fontsize=8, wrap=True)
-    for name, (pixels, valid, color) in paths.items():
-        for i in np.nonzero(mask)[0]:
-            keep = np.concatenate([[True], valid[i]])
-            line = pixels[i][keep]
-            width = 1.6 if dynamic is None or dynamic[i] else 0.6
-            ax.plot(line[:, 0], line[:, 1], color=color, linewidth=width, alpha=0.9)
-            ax.scatter(line[-1:, 0], line[-1:, 1], color=color, s=6)
-    ax.scatter(*[paths[next(iter(paths))][0][mask, 0, k] for k in (0, 1)], color="white", s=5, edgecolors="black",
-               linewidths=0.3)
+def shared_extent(sets: list[tuple[np.ndarray, np.ndarray]], rows: np.ndarray) -> tuple[float, ...]:
+    chosen = [points[rows][keep[rows]] for points, keep in sets if len(rows)]
+    stacked = np.concatenate(chosen) if chosen else np.array([[0.0, 0.0, 1.0]])
+    lo, hi = stacked.min(0), stacked.max(0)
+    half = max(hi[0] - lo[0], hi[2] - lo[2], 0.2) / 2 * 1.15
+    cx, cz = (hi[0] + lo[0]) / 2, (hi[2] + lo[2]) / 2
+    return cx - half, cx + half, cz - half, cz + half
 
 
-def render_case(path, rgb, panels: list[dict], suptitle: str) -> None:
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    fig, axes = plt.subplots(1, len(panels), figsize=(3.6 * len(panels), 4.0), squeeze=False)
-    for ax, panel in zip(axes[0], panels):
-        draw_panel(ax, rgb, panel["paths"], panel["mask"], panel["title"], panel.get("dynamic"))
-    fig.suptitle(suptitle, fontsize=9)
-    fig.tight_layout()
-    fig.savefig(path, dpi=110)
-    plt.close(fig)
+def render_case(path, rgb: np.ndarray, anchor_xyz: np.ndarray, intrinsics: np.ndarray,
+                panels: list[tuple[str, np.ndarray, np.ndarray]], rows: np.ndarray, suptitle: str,
+                upscale: int = 2) -> None:
+    base = grayscale(Image.fromarray(rgb).resize((rgb.shape[1] * upscale, rgb.shape[0] * upscale)))
+    sets = [absolute_points(anchor_xyz, trace, valid) for _, trace, valid in panels]
+    extent = shared_extent(sets, rows)
+    views, tops = [], []
+    for (title, trace, valid), (points, keep) in zip(panels, sets):
+        pixels = project(anchor_xyz, trace, intrinsics) * upscale
+        views.append(titled(draw_paths(base.copy(), pixels, keep, rows, keep.shape[1]), title))
+        tops.append(titled(top_down(points, keep, rows, keep.shape[1], base.width, extent), f"{title}: x-z"))
+    row1, row2 = hstack(views), hstack(tops)
+    sheet = Image.new("RGB", (row1.width, row1.height + row2.height + 30), (24, 24, 28))
+    sheet.paste(titled(row1, suptitle, 30), (0, 0))
+    sheet.paste(row2, (0, row1.height + 30))
+    sheet.save(path)
