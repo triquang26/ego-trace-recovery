@@ -48,7 +48,8 @@ def download_egodex(part: str) -> str:
 
 
 @app.function(image=teacher_image, gpu=GPU, volumes={VOLUME_PATH: volume}, timeout=24 * 3600, cpu=8, memory=65536)
-def export_egodex(dataset: str, part: str, split: str, start: int, count: int, stride: float) -> dict:
+def export_egodex(dataset: str, part: str, split: str, start: int, count: int, stride: float,
+                  frame_step: int = 2, chunk_seconds: float = 12.0) -> dict:
     from twe.config import WorldConfig
     from twe.data.egodex import egodex_recordings
     from twe.models.visual_encoder import DinoVisualEncoder
@@ -60,10 +61,11 @@ def export_egodex(dataset: str, part: str, split: str, start: int, count: int, s
     cfg = WorldConfig()
     visual = DinoVisualEncoder(cfg.visual_encoder, cfg.visual_encoder_revision, cfg.patch_grid).to("cuda")
     teacher = load_spatracker("cuda")
-    recordings = egodex_recordings(VOLUME_PATH / "raw" / "egodex" / part, start, count)
+    recordings = egodex_recordings(VOLUME_PATH / "raw" / "egodex" / part, start, count, frame_step)
     root = VOLUME_PATH / "data" / dataset
     root.mkdir(parents=True, exist_ok=True)
-    report = export_shard(recordings, teacher, dino_selector(visual, cfg, "cuda"), cfg, ExportSettings(), root,
+    settings = ExportSettings(chunk_seconds=chunk_seconds)
+    report = export_shard(recordings, teacher, dino_selector(visual, cfg, "cuda"), cfg, settings, root,
                           f"egodex-{part}-{start:06d}", "human_nominal", split, stride)
     volume.commit()
     return {k: v for k, v in report.items() if k != "skipped"} | {"skipped": len(report.get("skipped", []))}

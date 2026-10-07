@@ -14,8 +14,8 @@ def teacher_revision(width: int = 518) -> str:
 
 def reprojection_error(points_camera: np.ndarray, intrinsics: np.ndarray, xy: np.ndarray) -> np.ndarray:
     z = points_camera[:, 2]
-    u = intrinsics[0, 0] * points_camera[:, 0] / z + intrinsics[0, 2]
-    v = intrinsics[1, 1] * points_camera[:, 1] / z + intrinsics[1, 2]
+    u = intrinsics[..., 0, 0] * points_camera[:, 0] / z + intrinsics[..., 0, 2]
+    v = intrinsics[..., 1, 1] * points_camera[:, 1] / z + intrinsics[..., 1, 2]
     return np.where(z > 0, np.hypot(u - xy[:, 0], v - xy[:, 1]), np.inf)
 
 
@@ -34,7 +34,7 @@ class SpaTrackerTeacher:
         self.revision = teacher_revision(width)
 
     @torch.no_grad()
-    def track(self, frames: np.ndarray, query_xy: np.ndarray) -> TeacherTracks:
+    def track(self, frames: np.ndarray, query_xy: np.ndarray, query_frame: np.ndarray) -> TeacherTracks:
         height, width = frames.shape[1:3]
         video = self.preprocess(torch.from_numpy(frames).permute(0, 3, 1, 2).float())
         scale = np.array([video.shape[-1] / width, video.shape[-2] / height])
@@ -47,27 +47,30 @@ class SpaTrackerTeacher:
         intrinsic = front["intrs"].squeeze(0).float().cpu().numpy()
         depth = front["points_map"][..., 2].squeeze(0).float().cpu().numpy()
         unc = front["unc_metric"].squeeze(0).float().cpu().numpy() > self.depth_confidence
-        queries = np.concatenate([np.zeros((len(xy), 1)), xy], 1).astype(np.float32)
+        queries = np.concatenate([query_frame[:, None], xy], 1).astype(np.float32)
         with torch.autocast("cuda", dtype=torch.bfloat16):
             c2w, intrs, point_map, conf_depth, track3d, _, vis, conf, _ = self.predictor.forward(
                 video, depth=depth, intrs=intrinsic, extrs=extrinsic, queries=queries, fps=1, full_point=False,
                 iters_track=self.iters_track, query_no_BA=True, fixed_cam=False, stage=1, unc_metric=unc,
                 support_frame=len(video) - 1, replace_ratio=0.2)
         c2w = c2w.double().cpu().numpy()
+        intrs = intrs.double().cpu().numpy()
         camera = track3d[..., :3].double().cpu().numpy()
         points_world = np.einsum("tij,tnj->nti", c2w[:, :3, :3], camera) + c2w[:, None, :3, 3].transpose(1, 0, 2)
         reliability = (vis[..., 0] * conf[..., 0]).float().cpu().numpy().T
-        error = reprojection_error(camera[0], intrs[0].double().cpu().numpy(), xy)
+        frame = query_frame.astype(int)
+        error = reprojection_error(camera[frame, np.arange(len(xy))], intrs[frame], xy)
         if np.median(error) > self.max_reprojection_px:
             raise ValueError(f"teacher reprojection error {np.median(error):.2f}px breaks opencv convention check")
         reliability[error > self.max_reprojection_px, :] = 0.0
-        current = point_map[0, 2].float().cpu().numpy()
-        current[conf_depth[0].float().cpu().numpy() < self.depth_confidence] = np.nan
-        source_k = intrs[0].double().cpu().numpy().copy()
-        source_k[0, 2] += 0.5
-        source_k[1, 2] += 0.5
-        source_k = np.diag([1 / scale[0], 1 / scale[1], 1.0]) @ source_k
-        return TeacherTracks(points_world, reliability, np.linalg.inv(c2w), current, "opencv", self.revision,
+        depth_maps = point_map[:, 2].float().cpu().numpy()
+        depth_maps[conf_depth.float().cpu().numpy() < self.depth_confidence] = np.nan
+        lift = np.diag([1 / scale[0], 1 / scale[1], 1.0])
+        source_k = intrs.copy()
+        source_k[:, :2, 2] += 0.5
+        source_k = lift @ source_k
+        frames_used = {int(f): depth_maps[int(f)] for f in np.unique(query_frame)}
+        return TeacherTracks(points_world, reliability, np.linalg.inv(c2w), frames_used, "opencv", self.revision,
                              source_k)
 
 

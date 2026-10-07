@@ -10,7 +10,8 @@ from twe.data.shards import ShardWriter
 from twe.preprocess.camera_reference import (relative_displacements, robust_scene_scale, to_opencv_camera,
                                              world_to_reference_camera)
 from twe.preprocess.letterbox import letterbox, uv_to_source_xy
-from twe.preprocess.teacher import TrackTeacher
+from twe.preprocess.chunking import Chunk, plan_chunks, window_starts
+from twe.preprocess.teacher import TeacherTracks, TrackTeacher
 from twe.preprocess.temporal_sampling import gather_tracks, plan_future_samples
 
 AnchorSelector = Callable[[torch.Tensor, torch.Tensor], tuple[torch.Tensor, torch.Tensor]]
@@ -33,6 +34,7 @@ class ExportSettings:
     tolerance: float = 0.004
     reliability_threshold: float = 0.5
     geometry_provenance: str = "estimated"
+    chunk_seconds: float = 12.0
 
 
 def letterbox_intrinsics(intrinsics: np.ndarray | None, transform) -> np.ndarray:
@@ -42,34 +44,37 @@ def letterbox_intrinsics(intrinsics: np.ndarray | None, transform) -> np.ndarray
     return (lift @ intrinsics).astype(np.float32)
 
 
-def export_window(recording: Recording, current_index: int, teacher: TrackTeacher, select: AnchorSelector,
+def anchor_queries(frames: np.ndarray, starts: list[int], select: AnchorSelector, size: int) -> list[dict]:
+    views = [letterbox(frames[s], size) for s in starts]
+    rgb = torch.stack([torch.from_numpy(v[0]).permute(2, 0, 1) for v in views]).float() / 255.0
+    valid = torch.stack([torch.from_numpy(v[1]) for v in views])
+    uv, mask = select(rgb, valid)
+    uv, mask = uv.cpu().numpy(), mask.cpu().numpy()
+    return [{"start": s, "rgb": v[0], "valid": v[1], "transform": v[2], "uv": uv[i], "mask": mask[i],
+             "xy": uv_to_source_xy(uv[i], v[2], size)} for i, (s, v) in enumerate(zip(starts, views))]
+
+
+def window_record(recording: Recording, chunk: Chunk, query: dict, rows: slice, tracks: TeacherTracks,
                   cfg: WorldConfig, settings: ExportSettings) -> tuple[dict, dict] | None:
-    times = recording.timestamps
-    current_time = float(times[current_index])
-    horizon_end = current_time + cfg.horizon_seconds + settings.max_gap
-    indices = np.arange(current_index, int(np.searchsorted(times, horizon_end, side="right")))
-    frames = recording.read_frames(indices)
-    rgb, valid, transform = letterbox(frames[0], cfg.image_size)
-    rgb_tensor = torch.from_numpy(rgb).permute(2, 0, 1)[None].float() / 255.0
-    uv, mask = select(rgb_tensor, torch.from_numpy(valid)[None])
-    uv, mask = uv[0].cpu().numpy(), mask[0].cpu().numpy()
-    query_xy = uv_to_source_xy(uv, transform, cfg.image_size)
-    tracks = teacher.track(frames, query_xy)
-    scale = robust_scene_scale(tracks.current_depth)
+    s = query["start"]
+    scale = robust_scene_scale(tracks.depth[s])
     if scale is None:
         return None
-    window_times = times[indices] - current_time
-    plan = plan_future_samples(window_times, 0.0, [0.0] + cfg.future_offsets, settings.max_gap, settings.tolerance)
-    points, reliability = gather_tracks(tracks.points_world, tracks.reliability, plan)
-    camera = world_to_reference_camera(points, tracks.world_to_camera[0])
-    camera = to_opencv_camera(camera, tracks.convention)
+    times = recording.timestamps[chunk.frames]
+    current_time = float(times[s])
+    plan = plan_future_samples(times[s:] - current_time, 0.0, [0.0] + cfg.future_offsets, settings.max_gap,
+                               settings.tolerance)
+    points, reliability = gather_tracks(tracks.points_world[rows, s:], tracks.reliability[rows, s:], plan)
+    camera = to_opencv_camera(world_to_reference_camera(points, tracks.world_to_camera[s]), tracks.convention)
     trace, trace_valid, trace_reliability = relative_displacements(camera, reliability, scale,
                                                                    settings.reliability_threshold)
+    mask = query["mask"]
     trace_valid &= mask[:, None]
     anchor_xyz = np.where(np.isfinite(camera[:, 0]), camera[:, 0] / scale, 0.0).astype(np.float32)
-    arrays = {"anchor_xyz": anchor_xyz, "intrinsics": letterbox_intrinsics(tracks.intrinsics, transform),
-              "rgb": rgb, "image_valid": valid, "anchor_uv": uv, "anchor_mask": mask, "trace": trace,
-              "trace_valid": trace_valid, "trace_reliability": trace_reliability * trace_valid}
+    k = None if tracks.intrinsics is None else tracks.intrinsics[s]
+    arrays = {"anchor_xyz": anchor_xyz, "intrinsics": letterbox_intrinsics(k, query["transform"]),
+              "rgb": query["rgb"], "image_valid": query["valid"], "anchor_uv": query["uv"], "anchor_mask": mask,
+              "trace": trace, "trace_valid": trace_valid, "trace_reliability": trace_reliability * trace_valid}
     meta = {
         "sample_id": f"{recording.source}/{recording.recording_id}/{current_time:.3f}",
         "source": recording.source,
@@ -79,7 +84,7 @@ def export_window(recording: Recording, current_index: int, teacher: TrackTeache
         "instruction_available_at_t": recording.instruction is not None,
         "current_timestamp_seconds": current_time,
         "future_offsets_seconds": cfg.future_offsets,
-        "letterbox_transform": transform.to_dict(),
+        "letterbox_transform": query["transform"].to_dict(),
         "scene_scale": scale,
         "geometry_provenance": settings.geometry_provenance,
         "teacher_revision": tracks.revision,
@@ -89,24 +94,26 @@ def export_window(recording: Recording, current_index: int, teacher: TrackTeache
     return arrays, meta
 
 
-def export_recording(recording: Recording, current_indices: list[int], teacher: TrackTeacher,
-                     select: AnchorSelector, cfg: WorldConfig, settings: ExportSettings, writer: ShardWriter) -> int:
+def export_chunk(recording: Recording, chunk: Chunk, teacher: TrackTeacher, select: AnchorSelector,
+                 cfg: WorldConfig, settings: ExportSettings) -> list[tuple[dict, dict]]:
+    frames = recording.read_frames(chunk.frames)
+    queries = anchor_queries(frames, chunk.starts, select, cfg.image_size)
+    xy = np.concatenate([q["xy"] for q in queries])
+    when = np.concatenate([np.full(len(q["xy"]), q["start"]) for q in queries])
+    tracks = teacher.track(frames, xy, when)
+    count = cfg.num_anchors
+    records = [window_record(recording, chunk, q, slice(i * count, (i + 1) * count), tracks, cfg, settings)
+               for i, q in enumerate(queries)]
+    return [r for r in records if r is not None]
+
+
+def export_recording(recording: Recording, teacher: TrackTeacher, select: AnchorSelector, cfg: WorldConfig,
+                     settings: ExportSettings, writer: ShardWriter, stride: float) -> int:
+    span = cfg.horizon_seconds + settings.max_gap
+    starts = window_starts(recording.timestamps, span, stride)
     written = 0
-    for index in current_indices:
-        result = export_window(recording, index, teacher, select, cfg, settings)
-        if result is not None:
-            writer.add(*result)
+    for chunk in plan_chunks(recording.timestamps, starts, span, settings.chunk_seconds):
+        for arrays, meta in export_chunk(recording, chunk, teacher, select, cfg, settings):
+            writer.add(arrays, meta)
             written += 1
     return written
-
-
-def window_starts(timestamps: np.ndarray, horizon: float, stride: float) -> list[int]:
-    starts, next_time = [], float(timestamps[0])
-    last_start = float(timestamps[-1]) - horizon
-    for index, time in enumerate(timestamps):
-        if time > last_start:
-            break
-        if time >= next_time:
-            starts.append(index)
-            next_time = time + stride
-    return starts

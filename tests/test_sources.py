@@ -42,6 +42,9 @@ def test_egodex_recordings_use_selected_description(tmp_path):
     (recording,) = list(egodex_recordings(tmp_path / "test"))
     assert recording.instruction == "pour water back into the bottle"
     assert recording.recording_id == "test/pour_water/0" and len(recording.timestamps) == 10
+    (half,) = list(egodex_recordings(tmp_path / "test", frame_step=2))
+    assert np.allclose(half.timestamps, recording.timestamps[::2])
+    assert np.array_equal(half.read_frames(np.array([1, 2])), recording.read_frames(np.array([2, 4])))
 
 
 def test_manifest_collect_reads_shard_entries(tmp_path):
@@ -92,14 +95,16 @@ def resize(video):
 def test_spatracker_teacher_verifies_convention_and_outputs_world_tracks():
     frames = np.zeros((5, 48, 96, 3), dtype=np.uint8)
     query = np.array([[10.0, 20.0], [50.0, 30.0]])
+    when = np.array([0, 2])
     teacher = SpaTrackerTeacher(StubFront(), StubPredictor(1.0), resize, width=56, device="cpu")
-    tracks = teacher.track(frames, query)
+    tracks = teacher.track(frames, query, when)
+    assert sorted(tracks.depth) == [0, 2] and tracks.intrinsics.shape == (5, 3, 3)
     assert tracks.points_world.shape == (2, 5, 3) and tracks.convention == "opencv"
     assert np.allclose(tracks.points_world[:, 4, 0] - tracks.points_world[:, 0, 0], 0.4)
     assert np.allclose(tracks.reliability, 0.9) and np.allclose(tracks.world_to_camera[1, 0, 3], -0.1)
     flipped = SpaTrackerTeacher(StubFront(), StubPredictor(-1.0), resize, width=56, device="cpu")
     try:
-        flipped.track(frames, query)
+        flipped.track(frames, query, when)
         raise AssertionError("expected convention failure")
     except ValueError as error:
         assert "reprojection" in str(error)

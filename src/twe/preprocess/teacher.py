@@ -9,7 +9,7 @@ class TeacherTracks:
     points_world: np.ndarray
     reliability: np.ndarray
     world_to_camera: np.ndarray
-    current_depth: np.ndarray
+    depth: dict[int, np.ndarray]
     convention: str
     revision: str
     intrinsics: np.ndarray | None = None
@@ -18,5 +18,5 @@ class TeacherTracks:
 class TrackTeacher(Protocol):
     revision: str
 
-    def track(self, frames: np.ndarray, query_xy: np.ndarray) -> TeacherTracks:
+    def track(self, frames: np.ndarray, query_xy: np.ndarray, query_frame: np.ndarray) -> TeacherTracks:
         ...

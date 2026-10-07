@@ -1,6 +1,8 @@
 from collections.abc import Iterator
 from pathlib import Path
 
+import numpy as np
+
 from twe.data.video import VideoFile
 from twe.preprocess.export_windows import Recording
 
@@ -22,19 +24,21 @@ def egodex_episodes(root: Path) -> list[tuple[str, Path, Path]]:
     return episodes
 
 
-def egodex_recording(part: str, task: str, hdf5: Path, video_path: Path) -> Recording:
+def egodex_recording(part: str, task: str, hdf5: Path, video_path: Path, frame_step: int = 1) -> Recording:
     import h5py
 
     with h5py.File(hdf5, "r") as handle:
         instruction = egodex_instruction(handle.attrs)
     video = VideoFile(video_path)
     recording_id = f"{part}/{task}/{hdf5.stem}"
-    return Recording(recording_id, "egodex", recording_id, instruction, video.timestamps, video.read,
-                     {"task": task, "phase": "nominal"})
+    return Recording(recording_id, "egodex", recording_id, instruction, video.timestamps[::frame_step],
+                     lambda indices: video.read(np.asarray(indices) * frame_step),
+                     {"task": task, "phase": "nominal", "frame_step": frame_step})
 
 
-def egodex_recordings(root: Path, start: int = 0, count: int | None = None) -> Iterator[Recording]:
+def egodex_recordings(root: Path, start: int = 0, count: int | None = None,
+                      frame_step: int = 1) -> Iterator[Recording]:
     root = Path(root)
     episodes = egodex_episodes(root)
     for task, hdf5, video in episodes[start : None if count is None else start + count]:
-        yield egodex_recording(root.name, task, hdf5, video)
+        yield egodex_recording(root.name, task, hdf5, video, frame_step)

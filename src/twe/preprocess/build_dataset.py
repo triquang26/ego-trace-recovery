@@ -7,7 +7,7 @@ import torch
 from twe.config import WorldConfig
 from twe.data.shards import ShardWriter
 from twe.preprocess.current_anchors import select_anchors
-from twe.preprocess.export_windows import ExportSettings, Recording, export_recording, window_starts
+from twe.preprocess.export_windows import ExportSettings, Recording, export_recording
 from twe.preprocess.teacher import TrackTeacher
 
 
@@ -29,9 +29,8 @@ def export_shard(recordings: Iterable[Recording], teacher: TrackTeacher, select,
     writer = ShardWriter(root, name, pool, split)
     report = {"recordings": 0, "skipped": [], "windows": 0}
     for recording in recordings:
-        starts = window_starts(recording.timestamps, cfg.horizon_seconds, stride)
         try:
-            report["windows"] += export_recording(recording, starts, teacher, select, cfg, settings, writer)
+            report["windows"] += export_recording(recording, teacher, select, cfg, settings, writer, stride)
             report["recordings"] += 1
         except ValueError as error:
             report["skipped"].append({"recording": recording.recording_id, "error": str(error)})
