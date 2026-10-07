@@ -15,6 +15,7 @@ src/twe/
   training/         objective, pretrain loop, evaluation, checkpoint artifact
   evaluation/       ADE/FDE, dynamic ADE, fit error, validity ECE
 deploy/modal_app.py Modal: synthetic smoke, normalizer, train trên A100
+deploy/modal_export.py Modal: tải EgoDex, export SpaTrackerV2 targets, finalize manifest + normalizer
 tests/              unit + end-to-end training trên CPU với encoder stub
 ```
 
@@ -37,6 +38,18 @@ modal run --detach deploy/modal_app.py --action train --data <dataset> --run <ru
 ```
 
 GPU mặc định `A100-40GB` (đổi bằng `TWE_GPU`). Dữ liệu và run nằm trong Modal Volume `trace-world-expert` (`/vol/data/<dataset>`, `/vol/runs/<run>`). Mỗi checkpoint được sync lên `hf://buckets/twanghcmut/trace-world-expert/runs/<run>` (đổi bằng `TWE_HF_BUCKET`). Chạy lại cùng `--run` sẽ resume từ `train_state.pt`.
+
+## Export EgoDex
+
+```bash
+modal run --detach deploy/modal_export.py --action download --part test
+modal run deploy/modal_export.py --action export --part test --dataset egodex_v1 --episodes 4
+modal run --detach deploy/modal_export.py --action export --part test --dataset egodex_v1
+modal run deploy/modal_export.py --action finalize --dataset egodex_v1
+modal run --detach deploy/modal_app.py --action train --data egodex_v1 --run egodex_v1
+```
+
+`part=test` vào split `validation`, `part1..part5` vào `train`. Mỗi job GPU export `--per-shard` episode thành một shard, cửa sổ cách nhau `--stride` giây. SpaTrackerV2 pin commit `7e12274`; teacher kiểm tra reprojection của query tại frame hiện tại để xác nhận convention OpenCV trước khi ghi target.
 
 ## Dataset contract
 
