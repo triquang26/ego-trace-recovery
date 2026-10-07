@@ -2,10 +2,13 @@ import json
 from collections.abc import Iterable
 from pathlib import Path
 
+import numpy as np
 import torch
 
 from twe.config import WorldConfig
-from twe.data.shards import ShardWriter
+from twe.data.manifest import Manifest
+from twe.data.shards import ShardReader, ShardWriter
+from twe.preprocess.camera_reference import moving_points
 from twe.preprocess.current_anchors import select_anchors
 from twe.preprocess.export_windows import ExportSettings, Recording, export_recording
 from twe.preprocess.teacher import TrackTeacher
@@ -42,3 +45,20 @@ def export_shard(recordings: Iterable[Recording], teacher: TrackTeacher, select,
         writer.close()
     (root / f"{name}.report.json").write_text(json.dumps(report, indent=2))
     return report
+
+
+def relabel_moving(root: Path, threshold_px: float) -> int:
+    moving_total = 0
+    for entry in Manifest.read(root).shards:
+        reader = ShardReader(root, entry)
+        arrays = {key: np.asarray(reader.arrays[key]) for key in ("anchor_xyz", "trace", "trace_valid", "intrinsics",
+                                                                  "anchor_mask")}
+        labels = np.stack([
+            moving_points(np.concatenate([arrays["anchor_xyz"][w][:, None],
+                                          arrays["anchor_xyz"][w][:, None] + arrays["trace"][w]], 1),
+                          arrays["trace_valid"][w], arrays["intrinsics"][w], threshold_px) & arrays["anchor_mask"][w]
+            for w in range(len(reader))])
+        del reader
+        np.save(Path(root) / entry.path / "trace_moving.npy", labels)
+        moving_total += int(labels.sum())
+    return moving_total

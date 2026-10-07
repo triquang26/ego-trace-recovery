@@ -87,17 +87,20 @@ def count_episodes(part: str, every: int = 1) -> int:
 
 
 @app.function(image=teacher_image, volumes={VOLUME_PATH: volume}, timeout=3600)
-def finalize(dataset: str) -> dict:
+def finalize(dataset: str, moving_threshold_px: float = 10.0) -> dict:
     from twe.data.manifest import Manifest
+    from twe.preprocess.build_dataset import relabel_moving
     from twe.preprocess.normalizer import normalizer_from_dataset
     from twe.preprocess.spatracker_teacher import teacher_revision
 
     volume.reload()
     root = VOLUME_PATH / "data" / dataset
     manifest = Manifest.collect(root, teacher_revision())
+    moving = relabel_moving(root, moving_threshold_px)
     record = normalizer_from_dataset(root)
     volume.commit()
-    return {"shards": len(manifest.shards), "windows": sum(e.count for e in manifest.shards), **record}
+    return {"shards": len(manifest.shards), "windows": sum(e.count for e in manifest.shards), "moving_points": moving,
+            **record}
 
 
 @app.function(image=teacher_image, volumes={VOLUME_PATH: volume}, timeout=3600, cpu=8, memory=32768)

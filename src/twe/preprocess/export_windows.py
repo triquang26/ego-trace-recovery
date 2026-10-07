@@ -35,7 +35,7 @@ class ExportSettings:
     reliability_threshold: float = 0.5
     geometry_provenance: str = "estimated"
     chunk_seconds: float = 10.0
-    moving_threshold_px: float = 35.0
+    moving_threshold_px: float = 10.0
 
 
 def letterbox_intrinsics(intrinsics: np.ndarray | None, transform) -> np.ndarray:

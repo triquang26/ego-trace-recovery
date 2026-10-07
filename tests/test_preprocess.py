@@ -98,3 +98,13 @@ def test_normalizer_uses_only_moving_points(tmp_path):
     root = write_synthetic(tmp_path / "data")
     sigma = np.asarray(load_normalizer(root / "normalizer.json")["sigma"])
     assert sigma[:2].max() > 0.05
+
+
+def test_relabel_moving_rewrites_labels(tmp_path):
+    from twe.data.synthetic import write_synthetic
+    from twe.preprocess.build_dataset import relabel_moving
+
+    root = write_synthetic(tmp_path / "data")
+    loose = relabel_moving(root, 1.0)
+    strict = relabel_moving(root, 1e6)
+    assert loose > 0 and strict == 0
