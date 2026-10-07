@@ -6,6 +6,7 @@ import modal
 ROOT = Path(__file__).resolve().parent.parent
 VOLUME_PATH = Path("/vol")
 GPU = os.environ.get("TWE_EXPORT_GPU", "A100-80GB")
+CONTAINERS = int(os.environ.get("TWE_EXPORT_CONTAINERS", "4"))
 SPATRACKER = "/opt/SpaTrackerV2"
 SPATRACKER_COMMIT = "7e12274c52077860cebfe007a6290777db43b63c"
 EGODEX_URL = "https://ml-site.cdn-apple.com/datasets/egodex/{part}.zip"
@@ -48,7 +49,7 @@ def download_egodex(part: str) -> str:
 
 
 @app.function(image=teacher_image, gpu=GPU, volumes={VOLUME_PATH: volume}, timeout=24 * 3600, cpu=8, memory=65536,
-              max_containers=16)
+              max_containers=CONTAINERS)
 def export_egodex(dataset: str, part: str, split: str, start: int, count: int, stride: float,
                   every: int = 1, frame_step: int = 2, chunk_seconds: float = 10.0) -> dict:
     from twe.config import WorldConfig
@@ -125,7 +126,7 @@ def teacher_videos(dataset: str, count: int = 8, frame_step: int = 2) -> list[di
 
 @app.local_entrypoint()
 def main(action: str = "export", part: str = "test", dataset: str = "egodex_v1", split: str = "",
-         start: int = 0, episodes: int = 0, per_shard: int = 16, stride: float = 1.0, val_every: int = 0,
+         start: int = 0, episodes: int = 0, per_shard: int = 16, stride: float = 0.5, val_every: int = 0,
          every: int = 1) -> None:
     if action == "download":
         print(download_egodex.remote(part))

@@ -24,7 +24,8 @@ def masked_flow_loss(velocity: Tensor, target: Tensor, weight: Tensor) -> Tensor
 
 
 def point_weights(mask: Tensor, moving: Tensor, static_weight: float) -> Tensor:
-    return mask.float() * torch.where(moving, torch.ones_like(mask.float()), torch.full_like(mask.float(), static_weight))
+    base = mask.float()
+    return base * torch.where(moving, torch.ones_like(base), torch.full_like(base, static_weight))
 
 
 def validity_loss(logits: Tensor, target: Tensor, anchor_mask: Tensor) -> Tensor:

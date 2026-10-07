@@ -97,7 +97,8 @@ def build_demo(builder: DemoBuilder, out: Path, count: int = 200, seed: int = 0)
     others = [r["instruction"] for r in with_text]
     for n, row in enumerate(ranked[: len(ranked) // 2][:4]):
         swap = next((t for t in rng.permutation(others) if t != row["instruction"]), None)
-        variants = [(f"original: {row['instruction']}", ..., 0), (f"swapped: {swap}", swap, 0), ("no instruction", None, 0)]
+        variants = [(f"original: {row['instruction']}", ..., 0), (f"swapped: {swap}", swap, 0),
+                    ("no instruction", None, 0)]
         preds = builder.render(out, f"swap_{n}", row["index"], variants, False)
         change = [float(np.linalg.norm(p - preds[0], axis=-1).mean()) for p in preds[1:]]
         cases.append({"image": f"swap_{n}.png", "group": "instruction", **row, "swap": swap,

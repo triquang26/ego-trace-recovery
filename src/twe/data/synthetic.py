@@ -11,7 +11,8 @@ from twe.preprocess.normalizer import normalizer_from_dataset
 
 COLORS = {"red": (220, 40, 40), "green": (40, 200, 60), "blue": (40, 80, 220)}
 DIRECTIONS = {"left": (-1.0, 0.0), "right": (1.0, 0.0), "up": (0.0, -1.0), "down": (0.0, 1.0)}
-BACKGROUNDS = {"human_nominal": (180, 160, 130), "human_corrective": (150, 150, 170), "robot_nominal_video": (110, 110, 110)}
+BACKGROUNDS = {"human_nominal": (180, 160, 130), "human_corrective": (150, 150, 170),
+               "robot_nominal_video": (110, 110, 110)}
 SOURCE_SHAPE = (168, 224)
 MOVING = 16
 MASKED = 4
@@ -50,11 +51,13 @@ def synthetic_window(rng: np.random.Generator, scene: dict, cfg: WorldConfig, wi
     intrinsics = np.array([[focal, 0, 0], [0, focal, 0], [0, 0, 1]], dtype=np.float32)
     anchor_xyz = np.concatenate([uv, np.ones((len(uv), 1), np.float32)], 1)
     moving = np.arange(cfg.num_anchors) < MOVING
-    arrays = {"anchor_xyz": anchor_xyz, "trace_moving": moving, "intrinsics": intrinsics, "rgb": rgb, "image_valid": valid, "anchor_uv": uv, "anchor_mask": mask, "trace": trace,
+    arrays = {"anchor_xyz": anchor_xyz, "trace_moving": moving, "intrinsics": intrinsics, "rgb": rgb,
+              "image_valid": valid, "anchor_uv": uv, "anchor_mask": mask, "trace": trace,
               "trace_valid": trace_valid, "trace_reliability": trace_valid.astype(np.float32)}
     meta = {"sample_id": f"synthetic/{scene['recording_id']}/{window}",
             "source": "synthetic", "recording_id": scene["recording_id"], "split_group": scene["recording_id"],
-            "original_instruction": scene["instruction"], "instruction_available_at_t": scene["instruction"] is not None,
+            "original_instruction": scene["instruction"],
+            "instruction_available_at_t": scene["instruction"] is not None,
             "letterbox_transform": transform.to_dict(), "coordinate_contract": COORDINATE_CONTRACT,
             "geometry_provenance": "synthetic"}
     return arrays, meta
