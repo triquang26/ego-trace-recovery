@@ -1,4 +1,5 @@
 import json
+from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
@@ -37,7 +38,9 @@ class ShardWriter:
         with open(directory / "meta.jsonl", "w") as handle:
             for meta in self.metas:
                 handle.write(json.dumps(meta) + "\n")
-        return ShardEntry(self.name, self.pool, self.split, len(self))
+        entry = ShardEntry(self.name, self.pool, self.split, len(self))
+        (directory / "entry.json").write_text(json.dumps(asdict(entry)))
+        return entry
 
 
 class ShardReader:

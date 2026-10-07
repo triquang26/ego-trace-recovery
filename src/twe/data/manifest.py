@@ -41,3 +41,10 @@ class Manifest:
         if manifest.coordinate_contract != COORDINATE_CONTRACT:
             raise ValueError(f"coordinate contract {manifest.coordinate_contract} != {COORDINATE_CONTRACT}")
         return manifest
+
+    @classmethod
+    def collect(cls, root: Path, teacher_revision: str) -> "Manifest":
+        entries = [ShardEntry(**json.loads(path.read_text())) for path in sorted(Path(root).glob("*/entry.json"))]
+        manifest = cls([e for e in entries if e.count > 0], teacher_revision)
+        manifest.write(root)
+        return manifest
