@@ -71,7 +71,7 @@ def demo(data: str, run: str, count: int = 200, config: str = "configs/stage1.ya
     from twe.evaluation.demo import DemoBuilder, build_demo
     from twe.models.world_module import build_world_module
     from twe.preprocess.normalizer import load_normalizer
-    from twe.training.checkpoint import load_world
+    from twe.training.checkpoint import artifact_world_config, load_world
     from twe.training.pretrain_world import make_fitter
 
     volume.reload()
@@ -79,7 +79,7 @@ def demo(data: str, run: str, count: int = 200, config: str = "configs/stage1.ya
     root, out = VOLUME_PATH / "data" / data, VOLUME_PATH / "runs" / run
     sigma = load_normalizer(root / "normalizer.json")["sigma"]
     fitter = make_fitter(cfg)
-    module = build_world_module(cfg.world)
+    module = build_world_module(artifact_world_config(out / "world_latest.pt"))
     load_world(out / "world_latest.pt", module)
     sampling = QuerySampling(cfg.world.num_anchors, cfg.min_moving_points, False)
     dataset = WorldWindowDataset(root, "validation", sigma, fitter, sampling)

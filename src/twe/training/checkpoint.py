@@ -39,6 +39,10 @@ def save_world(path: Path, artifact: dict) -> str:
     return digest
 
 
+def artifact_world_config(path: Path) -> WorldConfig:
+    return WorldConfig(**torch.load(path, map_location="cpu", weights_only=False)["world_config"])
+
+
 def load_world(path: Path, module: WorldModule) -> dict:
     artifact = torch.load(path, map_location="cpu", weights_only=False)
     for key, expected in (("preprocessing_revision", PREPROCESSING_REVISION),
