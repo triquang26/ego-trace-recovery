@@ -92,16 +92,18 @@ def finalize(dataset: str) -> dict:
 
 @app.local_entrypoint()
 def main(action: str = "export", part: str = "test", dataset: str = "egodex_v1", split: str = "",
-         start: int = 0, episodes: int = 0, per_shard: int = 16, stride: float = 1.0) -> None:
+         start: int = 0, episodes: int = 0, per_shard: int = 16, stride: float = 1.0, val_every: int = 0) -> None:
     if action == "download":
         print(download_egodex.remote(part))
     elif action == "count":
         print(count_episodes.remote(part))
     elif action == "export":
         episodes = episodes or count_episodes.remote(part) - start
-        split = split or ("validation" if part == "test" else "train")
         starts = list(range(start, start + episodes, per_shard))
-        args = [(dataset, part, split, s, min(per_shard, start + episodes - s), stride) for s in starts]
+        fixed = split or ("validation" if part == "test" else "train")
+        splits = [("validation" if n % val_every == val_every - 1 else "train") if val_every else fixed
+                  for n in range(len(starts))]
+        args = [(dataset, part, sp, s, min(per_shard, start + episodes - s), stride) for sp, s in zip(splits, starts)]
         for result in export_egodex.starmap(args):
             print(result)
     elif action == "finalize":
