@@ -60,11 +60,15 @@ modal run deploy/modal_app.py --action demo --data egodex_v2 --run egodex_v2
 
 ## Trích xuất target
 
-- **Anchors**: chỉ từ frame hiện tại. Feature DINO và vị trí được gom thành `anchor_entities` thực thể; mỗi thực thể nhận số điểm theo diện tích mũ `anchor_area_power`, tối thiểu `anchor_min_per_entity`, rải đều bên trong bằng k-means trên toạ độ và bỏ vùng sát mép letterbox. Cùng hàm được dùng ở export và inference.
-- **Teacher**: SpaTrackerV2 (commit `7e12274`, camera ước lượng bằng VGGT front). Video được giảm còn 15 fps và chia chunk 10 s; mỗi chunk chạy teacher một lần với query `(t, x, y)` của mọi cửa sổ bên trong. `full_point=True` giữ danh tính query. Reprojection của mỗi query tại frame của nó phải dưới 4 px, nếu không recording bị bỏ.
+Theo μ₀ (TraceExtract, Appendix A và `trace_dataset.py` của repo `Yoonkyo/mu0`):
+
+- **Query pool**: mỗi cửa sổ track `query_pool` (128) điểm chọn từ frame hiện tại. Tiền cảnh tách bằng thành phần chính của feature DINO; `anchor_foreground_fraction` điểm dành cho tiền cảnh, gom thành `anchor_entities` thực thể, mỗi thực thể nhận điểm theo diện tích mũ `anchor_area_power`, tối thiểu `anchor_min_per_entity`, rải đều bên trong; phần còn lại phủ nền.
+- **Teacher**: SpaTrackerV2 (commit `7e12274`, camera ước lượng bằng VGGT front). Video giảm còn 15 fps, chia chunk 10 s; mỗi chunk chạy teacher một lần với query `(t, x, y)` của mọi cửa sổ. `full_point=True` giữ danh tính query. Reprojection của mỗi query tại frame của nó phải dưới 4 px, nếu không recording bị bỏ.
 - **Target**: điểm tương lai đưa về camera tại t, trừ origin, chia median depth hiện tại; sample theo timestamp thật, không nội suy qua gap.
-- **Movement filter**: điểm có biên độ chiếu ≥ 35 px trên ảnh 224 được đánh dấu `trace_moving`. Nhãn này dùng cho dynamic metrics, chọn case demo và trọng số loss (`static_point_weight`), không vào input.
+- **Movement filter**: biên độ chiếu ≥ 35 px trên ảnh 224 (40 px ở 256 như μ₀) → `trace_moving`.
+- **Train**: như μ₀, mỗi mẫu bốc ngẫu nhiên N ∈ [`min_moving_points`, 64] điểm chỉ trong các điểm chuyển động; cửa sổ ít hơn `min_moving_points` điểm chuyển động bị bỏ. Validation bốc cố định theo index.
+- **Inference**: `WorldModule.extract_features` chọn 64 anchor từ frame hiện tại bằng cùng bộ chọn thực thể.
 
 ## Dataset contract
 
-`manifest.json` liệt kê shards (`pool`, `split`, `count`) cùng `teacher_revision`, `preprocessing_revision`, `coordinate_contract`; loader từ chối revision không khớp. Mỗi shard gồm `rgb`, `image_valid`, `anchor_uv`, `anchor_mask`, `anchor_xyz`, `intrinsics`, `trace`, `trace_valid`, `trace_reliability`, `trace_moving` (`.npy`) và `meta.jsonl`. `normalizer.json` chứa σ theo trục tính trên train split. B-spline target được fit lúc load từ trace và reliability.
+`manifest.json` liệt kê shards (`pool`, `split`, `count`) cùng `teacher_revision`, `preprocessing_revision`, `coordinate_contract`; loader từ chối revision không khớp. Mỗi shard gồm `rgb`, `image_valid`, `anchor_uv`, `anchor_mask`, `anchor_xyz`, `intrinsics`, `trace`, `trace_valid`, `trace_reliability`, `trace_moving` (`.npy`, `query_pool` hàng mỗi cửa sổ) và `meta.jsonl`. `normalizer.json` chứa σ theo trục tính trên train split. B-spline target được fit lúc load từ trace và reliability.
