@@ -5,7 +5,7 @@ import modal
 
 ROOT = Path(__file__).resolve().parent.parent
 VOLUME_PATH = Path("/vol")
-GPU = os.environ.get("TWE_EXPORT_GPU", "A100-40GB")
+GPU = os.environ.get("TWE_EXPORT_GPU", "A100-80GB")
 SPATRACKER = "/opt/SpaTrackerV2"
 SPATRACKER_COMMIT = "7e12274c52077860cebfe007a6290777db43b63c"
 EGODEX_URL = "https://ml-site.cdn-apple.com/datasets/egodex/{part}.zip"
@@ -49,7 +49,7 @@ def download_egodex(part: str) -> str:
 
 @app.function(image=teacher_image, gpu=GPU, volumes={VOLUME_PATH: volume}, timeout=24 * 3600, cpu=8, memory=65536)
 def export_egodex(dataset: str, part: str, split: str, start: int, count: int, stride: float,
-                  frame_step: int = 2, chunk_seconds: float = 12.0) -> dict:
+                  every: int = 1, frame_step: int = 2, chunk_seconds: float = 10.0) -> dict:
     from twe.config import WorldConfig
     from twe.data.egodex import egodex_recordings
     from twe.models.visual_encoder import DinoVisualEncoder
@@ -61,7 +61,7 @@ def export_egodex(dataset: str, part: str, split: str, start: int, count: int, s
     cfg = WorldConfig()
     visual = DinoVisualEncoder(cfg.visual_encoder, cfg.visual_encoder_revision, cfg.patch_grid).to("cuda")
     teacher = load_spatracker("cuda")
-    recordings = egodex_recordings(VOLUME_PATH / "raw" / "egodex" / part, start, count, frame_step)
+    recordings = egodex_recordings(VOLUME_PATH / "raw" / "egodex" / part, start, count, frame_step, every)
     root = VOLUME_PATH / "data" / dataset
     root.mkdir(parents=True, exist_ok=True)
     settings = ExportSettings(chunk_seconds=chunk_seconds)
@@ -72,10 +72,10 @@ def export_egodex(dataset: str, part: str, split: str, start: int, count: int, s
 
 
 @app.function(image=teacher_image, volumes={VOLUME_PATH: volume}, timeout=600)
-def count_episodes(part: str) -> int:
+def count_episodes(part: str, every: int = 1) -> int:
     from twe.data.egodex import egodex_episodes
 
-    return len(egodex_episodes(VOLUME_PATH / "raw" / "egodex" / part))
+    return len(egodex_episodes(VOLUME_PATH / "raw" / "egodex" / part)[::every])
 
 
 @app.function(image=teacher_image, volumes={VOLUME_PATH: volume}, timeout=3600)
@@ -94,18 +94,20 @@ def finalize(dataset: str) -> dict:
 
 @app.local_entrypoint()
 def main(action: str = "export", part: str = "test", dataset: str = "egodex_v1", split: str = "",
-         start: int = 0, episodes: int = 0, per_shard: int = 16, stride: float = 1.0, val_every: int = 0) -> None:
+         start: int = 0, episodes: int = 0, per_shard: int = 16, stride: float = 1.0, val_every: int = 0,
+         every: int = 1) -> None:
     if action == "download":
         print(download_egodex.remote(part))
     elif action == "count":
-        print(count_episodes.remote(part))
+        print(count_episodes.remote(part, every))
     elif action == "export":
-        episodes = episodes or count_episodes.remote(part) - start
+        episodes = episodes or count_episodes.remote(part, every) - start
         starts = list(range(start, start + episodes, per_shard))
         fixed = split or ("validation" if part == "test" else "train")
         splits = [("validation" if n % val_every == val_every - 1 else "train") if val_every else fixed
                   for n in range(len(starts))]
-        args = [(dataset, part, sp, s, min(per_shard, start + episodes - s), stride) for sp, s in zip(splits, starts)]
+        args = [(dataset, part, sp, s, min(per_shard, start + episodes - s), stride, every)
+                for sp, s in zip(splits, starts)]
         for result in export_egodex.starmap(args):
             print(result)
     elif action == "finalize":

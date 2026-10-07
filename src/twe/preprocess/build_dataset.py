@@ -32,8 +32,9 @@ def export_shard(recordings: Iterable[Recording], teacher: TrackTeacher, select,
         try:
             report["windows"] += export_recording(recording, teacher, select, cfg, settings, writer, stride)
             report["recordings"] += 1
-        except ValueError as error:
-            report["skipped"].append({"recording": recording.recording_id, "error": str(error)})
+        except (ValueError, torch.OutOfMemoryError) as error:
+            torch.cuda.empty_cache()
+            report["skipped"].append({"recording": recording.recording_id, "error": str(error)[:300]})
         print(json.dumps({"shard": name, **{k: v for k, v in report.items() if k != "skipped"},
                           "skipped": len(report["skipped"])}), flush=True)
     if len(writer):

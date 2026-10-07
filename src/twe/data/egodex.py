@@ -36,9 +36,9 @@ def egodex_recording(part: str, task: str, hdf5: Path, video_path: Path, frame_s
                      {"task": task, "phase": "nominal", "frame_step": frame_step})
 
 
-def egodex_recordings(root: Path, start: int = 0, count: int | None = None,
-                      frame_step: int = 1) -> Iterator[Recording]:
+def egodex_recordings(root: Path, start: int = 0, count: int | None = None, frame_step: int = 1,
+                      every: int = 1) -> Iterator[Recording]:
     root = Path(root)
-    episodes = egodex_episodes(root)
+    episodes = egodex_episodes(root)[::every]
     for task, hdf5, video in episodes[start : None if count is None else start + count]:
         yield egodex_recording(root.name, task, hdf5, video, frame_step)

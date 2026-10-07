@@ -50,14 +50,14 @@ class SpaTrackerTeacher:
         queries = np.concatenate([query_frame[:, None], xy], 1).astype(np.float32)
         with torch.autocast("cuda", dtype=torch.bfloat16):
             c2w, intrs, point_map, conf_depth, track3d, _, vis, conf, _ = self.predictor.forward(
-                video, depth=depth, intrs=intrinsic, extrs=extrinsic, queries=queries, fps=1, full_point=False,
+                video, depth=depth, intrs=intrinsic, extrs=extrinsic, queries=queries, fps=1, full_point=True,
                 iters_track=self.iters_track, query_no_BA=True, fixed_cam=False, stage=1, unc_metric=unc,
                 support_frame=len(video) - 1, replace_ratio=0.2)
         c2w = c2w.double().cpu().numpy()
         intrs = intrs.double().cpu().numpy()
         camera = track3d[..., :3].double().cpu().numpy()
         points_world = np.einsum("tij,tnj->nti", c2w[:, :3, :3], camera) + c2w[:, None, :3, 3].transpose(1, 0, 2)
-        reliability = (vis[..., 0] * conf[..., 0]).float().cpu().numpy().T
+        reliability = (vis[..., 0] * conf[..., 0]).clamp(0, 1).float().cpu().numpy().T
         frame = query_frame.astype(int)
         error = reprojection_error(camera[frame, np.arange(len(xy))], intrs[frame], xy)
         if np.median(error) > self.max_reprojection_px:

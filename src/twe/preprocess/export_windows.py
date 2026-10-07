@@ -34,7 +34,7 @@ class ExportSettings:
     tolerance: float = 0.004
     reliability_threshold: float = 0.5
     geometry_provenance: str = "estimated"
-    chunk_seconds: float = 12.0
+    chunk_seconds: float = 10.0
 
 
 def letterbox_intrinsics(intrinsics: np.ndarray | None, transform) -> np.ndarray:
