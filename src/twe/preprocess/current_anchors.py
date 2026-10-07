@@ -86,9 +86,38 @@ def spread_points(uv: Tensor, count: int, iterations: int) -> Tensor:
     return uv[torch.tensor(picked)]
 
 
+def otsu_threshold(values: Tensor, bins: int = 64) -> float:
+    low, high = float(values.min()), float(values.max())
+    if high - low < 1e-6:
+        return high
+    hist = torch.histc(values, bins, low, high)
+    centers = torch.linspace(low, high, bins)
+    weight = hist.cumsum(0)
+    mean = (hist * centers).cumsum(0)
+    total, total_mean = weight[-1], mean[-1]
+    between = (total_mean * weight / total - mean).pow(2) / (weight * (total - weight)).clamp_min(1e-6)
+    return float(centers[int(torch.argmax(between))])
+
+
+def foreground_mask(desc: Tensor) -> Tensor:
+    centered = desc - desc.mean(dim=0)
+    score = centered @ torch.linalg.svd(centered, full_matrices=False).Vh[0]
+    front = score > otsu_threshold(score)
+    return front if front.sum() <= (~front).sum() else ~front
+
+
+def entity_points(uv: Tensor, desc: Tensor, count: int, entities: int, min_per_entity: int,
+                  spatial_weight: float, area_power: float, iterations: int) -> Tensor:
+    labels = kmeans(torch.cat([desc, spatial_weight * uv], dim=-1), entities, iterations)
+    present = torch.unique(labels)
+    sizes = torch.stack([(labels == k).sum() for k in present])
+    quotas = entity_quotas(sizes, min(count, len(uv)), min_per_entity, area_power)
+    return torch.cat([spread_points(uv[labels == k], int(q), iterations) for k, q in zip(present, quotas) if q > 0])
+
+
 @torch.no_grad()
 def select_anchors(patch_features: Tensor, image_valid: Tensor, num_anchors: int, entities: int,
-                   min_per_entity: int, spatial_weight: float, area_power: float,
+                   min_per_entity: int, spatial_weight: float, area_power: float, foreground_fraction: float,
                    iterations: int = 10) -> tuple[Tensor, Tensor]:
     batch, grid = patch_features.shape[:2]
     features = patch_features.detach().float().cpu()
@@ -99,12 +128,17 @@ def select_anchors(patch_features: Tensor, image_valid: Tensor, num_anchors: int
         cand_uv, alive = candidate_grid(valid[b], grid * 2)
         cand_uv = cand_uv[alive]
         desc = F.normalize(sample_anchor_features(features[b : b + 1], cand_uv[None])[0], dim=-1)
-        labels = kmeans(torch.cat([desc, spatial_weight * cand_uv], dim=-1), entities, iterations)
-        present = torch.unique(labels)
-        sizes = torch.stack([(labels == k).sum() for k in present])
-        quotas = entity_quotas(sizes, min(num_anchors, len(cand_uv)), min_per_entity, area_power)
-        chosen = torch.cat([spread_points(cand_uv[labels == k], int(q), iterations)
-                            for k, q in zip(present, quotas) if q > 0])
+        front = foreground_mask(desc)
+        budget = min(num_anchors, len(cand_uv))
+        front_count = min(int(front.sum()), round(foreground_fraction * budget))
+        parts = []
+        if front_count:
+            parts.append(entity_points(cand_uv[front], desc[front], front_count, entities, min_per_entity,
+                                       spatial_weight, area_power, iterations))
+        back = cand_uv[~front]
+        if budget - front_count and len(back):
+            parts.append(spread_points(back, min(budget - front_count, len(back)), iterations))
+        chosen = torch.cat(parts)
         uv[b, : len(chosen)] = chosen
         mask[b, : len(chosen)] = True
     return uv.to(patch_features.device), mask.to(patch_features.device)

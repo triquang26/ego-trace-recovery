@@ -77,7 +77,7 @@ def test_anchor_selection_current_only_and_deterministic():
     patches = module.visual_encoder(context.rgb)
     direct = select_anchors(patches, context.image_valid, 64, TINY_WORLD.anchor_entities,
                             TINY_WORLD.anchor_min_per_entity, TINY_WORLD.anchor_spatial_weight,
-                            TINY_WORLD.anchor_area_power)
+                            TINY_WORLD.anchor_area_power, TINY_WORLD.anchor_foreground_fraction)
     assert torch.equal(direct[0], uv)
 
 
@@ -86,9 +86,9 @@ def test_entity_anchors_cover_small_salient_object():
     patches = torch.randn(1, 16, 16, 384) * 0.05 + torch.randn(384)
     patches[0, 3:5, 11:13] = torch.randn(384) * 3
     valid = torch.ones(1, 224, 224, dtype=torch.bool)
-    uv, mask = select_anchors(patches, valid, 64, 12, 3, 0.5, 0.35)
+    uv, mask = select_anchors(patches, valid, 64, 12, 3, 0.5, 0.35, 0.75)
     inside = ((uv[0, :, 0] > 11 / 16) & (uv[0, :, 0] < 13 / 16) & (uv[0, :, 1] > 3 / 16) & (uv[0, :, 1] < 5 / 16))
-    assert mask.all() and inside.sum() >= 3
+    assert mask.all() and inside.sum() >= 10
 
 
 def test_extract_features_contract():

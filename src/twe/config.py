@@ -21,6 +21,7 @@ class WorldConfig:
     anchor_min_per_entity: int = 3
     anchor_spatial_weight: float = 0.5
     anchor_area_power: float = 0.35
+    anchor_foreground_fraction: float = 0.75
     width: int = 512
     layers: int = 8
     heads: int = 8
