@@ -83,3 +83,29 @@ def test_export_marks_gap_invalid(tmp_path):
     offsets = np.asarray(cfg.future_offsets)
     assert not valid[(offsets > 1.0) & (offsets < 1.6)].any()
     assert valid[offsets < 0.95].all()
+
+
+class LimitedTeacher(RigidTeacher):
+    def __init__(self, *args, max_queries):
+        super().__init__(*args)
+        self.max_queries = max_queries
+        self.calls = 0
+
+    def track(self, frames, query_xy, query_frame):
+        self.calls += 1
+        if len(query_xy) > self.max_queries:
+            raise torch.OutOfMemoryError("too many queries")
+        return super().track(frames, query_xy, query_frame)
+
+
+def test_export_splits_chunk_on_out_of_memory(tmp_path):
+    timestamps = np.arange(0, 6.0, 1 / 30)
+    cfg = WorldConfig()
+    frames = np.zeros((len(timestamps), 48, 64, 3), dtype=np.uint8)
+    recording = Recording("rec", "unit", "rec", "push the cup", timestamps, lambda idx: frames[idx])
+    teacher = LimitedTeacher(timestamps, [0.4, 0.0, 0.0], [0.0, 0.0, 0.0], "opencv", max_queries=128)
+    writer = ShardWriter(tmp_path, "s", "human_nominal", "train")
+    written = export_recording(recording, teacher, grid_selector, cfg, ExportSettings(), writer, 0.5)
+    assert written == 8 and teacher.calls > 1
+    expected_x = 0.4 * np.asarray(cfg.future_offsets) / 4.0
+    assert np.allclose(writer.arrays["trace"][:, :, :, 0], expected_x, atol=1e-5)

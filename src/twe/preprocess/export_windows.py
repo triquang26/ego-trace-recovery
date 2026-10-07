@@ -110,13 +110,31 @@ def export_chunk(recording: Recording, chunk: Chunk, teacher: TrackTeacher, sele
     return [r for r in records if r is not None]
 
 
+def export_chunk_safely(recording: Recording, chunk: Chunk, teacher: TrackTeacher, select: AnchorSelector,
+                        cfg: WorldConfig, settings: ExportSettings) -> list[tuple[dict, dict]]:
+    try:
+        return export_chunk(recording, chunk, teacher, select, cfg, settings)
+    except torch.OutOfMemoryError:
+        torch.cuda.empty_cache()
+        if len(chunk.starts) < 2:
+            raise
+    starts = [int(chunk.frames[s]) for s in chunk.starts]
+    span = cfg.horizon_seconds + settings.max_gap
+    middle = len(starts) // 2
+    records = []
+    for part in (starts[:middle], starts[middle:]):
+        (piece,) = plan_chunks(recording.timestamps, part, span, float("inf"))
+        records += export_chunk_safely(recording, piece, teacher, select, cfg, settings)
+    return records
+
+
 def export_recording(recording: Recording, teacher: TrackTeacher, select: AnchorSelector, cfg: WorldConfig,
                      settings: ExportSettings, writer: ShardWriter, stride: float) -> int:
     span = cfg.horizon_seconds + settings.max_gap
     starts = window_starts(recording.timestamps, span, stride)
     written = 0
     for chunk in plan_chunks(recording.timestamps, starts, span, settings.chunk_seconds):
-        for arrays, meta in export_chunk(recording, chunk, teacher, select, cfg, settings):
+        for arrays, meta in export_chunk_safely(recording, chunk, teacher, select, cfg, settings):
             writer.add(arrays, meta)
             written += 1
     return written
