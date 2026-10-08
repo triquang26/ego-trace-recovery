@@ -97,17 +97,36 @@ class WorldModule(nn.Module):
         hidden = self.expert(inputs, noise, s).hidden
         return WorldFeatures(hidden, uv, mask, self.model_revision, PREPROCESSING_REVISION, NOISE_PROTOCOL)
 
+    def guided_outputs(self, inputs: ExpertInputs, controls: Tensor, s: Tensor, guidance: float,
+                       null_inputs: ExpertInputs | None) -> tuple[Tensor, Tensor]:
+        out = self.expert(inputs, controls, s)
+        velocity, logits = out.velocity.float(), out.motion_logits.float()
+        if null_inputs is None or guidance == 1.0:
+            return velocity, logits
+        base = self.expert(null_inputs, controls, s)
+        return (base.velocity.float() + guidance * (velocity - base.velocity.float()),
+                base.motion_logits.float() + guidance * (logits - base.motion_logits.float()))
+
     @torch.no_grad()
-    def sample_controls(self, inputs: ExpertInputs, steps: int, generator: torch.Generator | None = None) -> Tensor:
+    def sample_controls(self, inputs: ExpertInputs, steps: int, generator: torch.Generator | None = None,
+                        guidance: float = 1.0, null_inputs: ExpertInputs | None = None) -> Tensor:
         batch, points = inputs.anchor_uv.shape[:2]
         shape = (batch, points, self.cfg.free_control_points, 3)
         controls = torch.randn(shape, generator=generator).to(inputs.anchor_uv.device)
         times = torch.linspace(1.0, 0.0, steps + 1, device=controls.device)
         for start, end in zip(times[:-1], times[1:]):
             s = torch.full((batch,), float(start), device=controls.device)
-            velocity = self.expert(inputs, controls, s).velocity.float()
+            velocity, _ = self.guided_outputs(inputs, controls, s, guidance, null_inputs)
             controls = controls - (start - end) * velocity
         return controls
+
+    @torch.no_grad()
+    def motion_probability(self, inputs: ExpertInputs, guidance: float = 1.0,
+                           null_inputs: ExpertInputs | None = None) -> Tensor:
+        batch, points = inputs.anchor_uv.shape[:2]
+        noise = self.guidance_noise(batch, inputs.anchor_uv.device)[:, :points]
+        s = torch.ones(batch, device=inputs.anchor_uv.device)
+        return torch.sigmoid(self.guided_outputs(inputs, noise, s, guidance, null_inputs)[1])
 
 
 def build_world_module(cfg: WorldConfig) -> WorldModule:

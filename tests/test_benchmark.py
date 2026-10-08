@@ -12,7 +12,8 @@ from twe.evaluation.benchmark import METRICS, BenchmarkRunner, egodex_groups
 from twe.training.pretrain_world import make_fitter
 
 
-def fake_episode(root, name="test_dataset_droid/ep0", frames=40, points=6, height=180, width=320, speed=4.0):
+def fake_episode(root, name="test_dataset_droid/ep0", frames=40, points=6, height=180, width=320, speed=4.0,
+                 frame=0):
     path = root / name
     (path / "samples").mkdir(parents=True)
     np.save(path / "images.npy", np.full((frames, height, width, 3), 90, dtype=np.uint8))
@@ -20,7 +21,7 @@ def fake_episode(root, name="test_dataset_droid/ep0", frames=40, points=6, heigh
     steps = np.arange(frames)[None, :, None] * np.array([speed, 0.0, 0.0])
     future = (starts[:, None] + steps).astype(np.float16)
     history = (starts[:, None] - steps).astype(np.float16)
-    np.save(path / "samples/frame_indices.npy", np.array([0], dtype=np.int32))
+    np.save(path / "samples/frame_indices.npy", np.array([frame], dtype=np.int32))
     np.save(path / "samples/offsets.npy", np.array([0, points], dtype=np.int64))
     np.save(path / "samples/raw_traj.npy", future)
     np.save(path / "samples/raw_traj_history.npy", history)

@@ -58,6 +58,20 @@ modal run deploy/modal_app.py --action demo --data egodex_v4 --run egodex_v4
 modal run deploy/modal_app.py --action demo --data egodex_v4 --run egodex_v4 --split train --steps 16
 ```
 
+## Đánh giá tổng quát hoá
+
+```bash
+modal run deploy/modal_tools.py --action fetch-mu0
+modal run deploy/modal_app.py --action benchmark --data egodex_v4 --run scale_f100,scale_f067
+modal run deploy/modal_tools.py --action prompts --run scale_f100
+modal run deploy/modal_tools.py --action compare-teacher --group test_dataset_egodex
+```
+
+- `heldout_tasks` trong `configs/stage1.yaml` là các task EgoDex không bao giờ vào train hay validation; `train_shard_fraction` lấy một phần shard train (cố định theo hash tên shard) để đo đường scaling.
+- `benchmark` ghi `runs/<run>/benchmark.json`: trên điểm chuyển động, ADE một mẫu, trung bình 5 mẫu, minADE@5, baseline đứng yên, ADE khi bỏ history (đơn vị % cạnh ảnh 336), và AUROC của head chuyển động. Nhóm: validation task đã thấy, task giữ riêng, và test set μ₀ (TraceExtract: DROID, Franka, UR3, VIMA, EgoDex, video người và robot), quy về cùng (Δu, Δv, Δlog z) và horizon 2 s (`src/twe/data/traceextract.py`; DROID 5 Hz, còn lại 10 Hz).
+- `prompts` vẽ cùng cảnh với nhiều câu lệnh, có classifier-free guidance `w` (`WorldModule.sample_controls(..., guidance, null_inputs)`).
+- `compare-teacher` chạy teacher SpaTrackerV2 trên đúng frame và keypoint của TraceExtract, ghi lệch vị trí, hướng, độ rung, tỉ lệ depth và ảnh đặt cạnh nhau vào `/vol/viz/teacher_compare`.
+
 `part=test` vào `validation`, `part1..part5` vào `train`; `--val-every k` tách mỗi shard thứ k thành validation khi chỉ có một part. Shard đã có `entry.json` được bỏ qua khi chạy lại.
 
 ## Trích xuất target

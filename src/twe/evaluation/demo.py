@@ -17,11 +17,7 @@ def predict(module, fitter, context, seed: int, steps: int) -> np.ndarray:
 
 @torch.no_grad()
 def motion_probability(module, context) -> np.ndarray:
-    inputs = module.encode(context)
-    batch = context.anchor_uv.shape[0]
-    noise = module.guidance_noise(batch, context.anchor_uv.device)[:, : context.anchor_uv.shape[1]]
-    s = torch.ones(batch, device=context.anchor_uv.device)
-    return torch.sigmoid(module(inputs, noise, s).motion_logits.float()).cpu().numpy()[0]
+    return module.motion_probability(module.encode(context)).cpu().numpy()[0]
 
 
 def auroc(scores: np.ndarray, labels: np.ndarray) -> float:
