@@ -18,6 +18,8 @@ class ExpertInputs:
     anchor_features: Tensor
     anchor_uv: Tensor
     anchor_mask: Tensor
+    history: Tensor
+    history_valid: Tensor
 
 
 @dataclass
@@ -41,12 +43,14 @@ class TraceExpert(nn.Module):
         self.control_proj = nn.Linear(cfg.free_control_points * 3, width)
         self.feature_proj = nn.Linear(cfg.visual_dim, width)
         self.uv_proj = nn.Linear(2 + 4 * cfg.uv_frequencies, width)
+        self.history_proj = nn.Sequential(nn.Linear(cfg.history_steps * 4, width), nn.GELU(), nn.Linear(width, width))
+        self.no_history = nn.Parameter(torch.zeros(width))
         self.time_embed = TimeEmbedding(cfg.time_embedding_dim, width)
         self.blocks = nn.ModuleList(TraceBlock(width, cfg.heads, cfg.ffn_width, cfg.dropout) for _ in range(cfg.layers))
         self.norm = nn.LayerNorm(width)
         self.velocity_head = Head(width, cfg.free_control_points * 3)
         self.validity_head = Head(width, cfg.future_steps)
-        for p in (self.visual_type, self.text_type, self.null_text):
+        for p in (self.visual_type, self.text_type, self.null_text, self.no_history):
             nn.init.normal_(p, std=0.02)
 
     def context(self, inputs: ExpertInputs) -> tuple[Tensor, Tensor]:
@@ -59,6 +63,12 @@ class TraceExpert(nn.Module):
         text_mask[:, 0] |= inputs.text_null
         return torch.cat([visual, text], dim=1), torch.cat([inputs.visual_mask, text_mask], dim=1)
 
+    def history_embedding(self, inputs: ExpertInputs) -> Tensor:
+        valid = inputs.history_valid.to(inputs.history.dtype)
+        features = torch.cat([inputs.history * valid[..., None], valid[..., None]], -1).flatten(2)
+        seen = inputs.history_valid.any(-1, keepdim=True)
+        return torch.where(seen, self.history_proj(features), self.no_history.to(features.dtype))
+
     def forward(self, inputs: ExpertInputs, noisy_controls: Tensor, s: Tensor) -> ExpertOutputs:
         batch, points = noisy_controls.shape[:2]
         context, context_mask = self.context(inputs)
@@ -67,6 +77,7 @@ class TraceExpert(nn.Module):
             + self.feature_proj(inputs.anchor_features)
             + self.uv_proj(fourier_uv(inputs.anchor_uv, self.cfg.uv_frequencies))
             + self.time_embed(s)[:, None]
+            + self.history_embedding(inputs)
         ).float()
         for block in self.blocks:
             x = block(x, inputs.anchor_mask, context, context_mask)

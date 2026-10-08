@@ -1,10 +1,10 @@
-visual_encoder: facebook/dinov2-small
+visual_encoder: facebook/dinov2-base
 visual_encoder_revision: main
 text_encoder: google-t5/t5-small
 text_encoder_revision: main
-image_size: 224
-patch_grid: 16
-visual_dim: 384
+image_size: 336
+patch_grid: 24
+visual_dim: 768
 pooled_grid: 8
 text_dim: 512
 text_max_length: 64
@@ -19,9 +19,10 @@ width: 512
 layers: 8
 heads: 8
 ffn_width: 2048
-dropout: 0.0
+dropout: 0.1
 horizon_seconds: 2.0
 future_steps: 32
+history_steps: 8
 bspline_degree: 3
 free_control_points: 10
 uv_frequencies: 8

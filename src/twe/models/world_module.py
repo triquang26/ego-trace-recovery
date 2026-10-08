@@ -23,8 +23,18 @@ class WorldModule(nn.Module):
         weight = patch_validity(context.image_valid, self.cfg.patch_grid)
         visual, visual_mask = pool_visual(patches, weight, self.cfg.pooled_grid)
         anchors = sample_anchor_features(patches, context.anchor_uv)
+        history, history_valid = self.history_inputs(context)
         return ExpertInputs(visual, visual_mask, text.float(), text_mask, text_null,
-                            anchors, context.anchor_uv, context.anchor_mask)
+                            anchors, context.anchor_uv, context.anchor_mask, history, history_valid)
+
+    def history_inputs(self, context: WorldContext) -> tuple[Tensor, Tensor]:
+        if context.history is not None:
+            return context.history.float(), context.history_valid
+        batch, points = context.anchor_uv.shape[:2]
+        steps = self.cfg.history_steps
+        device = context.anchor_uv.device
+        return (torch.zeros(batch, points, steps, 3, device=device),
+                torch.zeros(batch, points, steps, dtype=torch.bool, device=device))
 
     def forward(self, inputs: ExpertInputs, noisy_controls: Tensor, s: Tensor) -> ExpertOutputs:
         return self.expert(inputs, noisy_controls, s)

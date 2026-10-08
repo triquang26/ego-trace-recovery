@@ -70,9 +70,11 @@ def test_camera_reference_and_displacement():
     points[0, :, 0] = [0, 1, 2, 3]
     points[1, 2:, 2] = -5
     cam = world_to_reference_camera(points, pose)
-    disp, valid, _ = relative_displacements(cam, np.ones((2, 4)), 2.0, 0.5)
-    assert np.allclose(disp[0, :, 0], [0.5, 1.0, 1.5]) and valid[0].all()
-    assert valid[1].tolist() == [True, False, False] and (disp[1, 1:] == 0).all()
+    disp, valid, _ = relative_displacements(cam, np.ones((2, 4)), 2.0, 0.5, 0)
+    assert np.allclose(disp[0, :, 0], [0.0, 0.5, 1.0, 1.5]) and valid[0].all()
+    assert valid[1].tolist() == [True, True, False, False] and (disp[1, 2:] == 0).all()
+    back, back_valid, _ = relative_displacements(cam, np.ones((2, 4)), 2.0, 0.5, 2)
+    assert np.allclose(back[0, :, 0], [-1.0, -0.5, 0.0, 0.5]) and back_valid[0].all()
     gl = np.array([[1.0, 2.0, -3.0]])
     assert np.allclose(to_opencv_camera(gl, "opengl"), [[1.0, -2.0, 3.0]])
 

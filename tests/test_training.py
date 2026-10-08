@@ -40,6 +40,9 @@ def test_dataset_samples_only_moving_points(tmp_path):
     val = WorldWindowDataset(root, "validation", [1, 1, 1], make_fitter(cfg), QuerySampling(64, 4, False))
     first, again = val[0], val[0]
     assert int(first["anchor_mask"].sum()) == 16 and torch.equal(first["anchor_uv"], again["anchor_uv"])
+    assert first["history_valid"][:16].all() and torch.equal(first["history"], again["history"])
+    dropping = WorldWindowDataset(root, "train", [1, 1, 1], make_fitter(cfg), QuerySampling(64, 4, True, 1.0, 0.0))
+    assert not dropping[0]["history_valid"].any()
 
 
 def test_training_reduces_loss_and_checkpoint_loads(tmp_path):
@@ -52,6 +55,7 @@ def test_training_reduces_loss_and_checkpoint_loads(tmp_path):
     losses = [r["loss"] for r in records if "loss" in r]
     assert losses[-1] < 0.7 * losses[0]
     assert metrics["ade"] < metrics["zero_motion_ade"] + 1.0 and len(calls) == 2
+    assert (out / "world_best.pt").exists() and "ade_no_history" in metrics
     report = json.loads((out / "parameters.json").read_text())
     assert report["trainable"] == report["trace_expert"]
     module = tiny_module()

@@ -80,8 +80,9 @@ def demo(data: str, run: str, count: int = 200, steps: int = 4, split: str = "va
     root, out = VOLUME_PATH / "data" / data, VOLUME_PATH / "runs" / run
     sigma = load_normalizer(root / "normalizer.json")["sigma"]
     fitter = make_fitter(cfg)
-    module = build_world_module(artifact_world_config(out / "world_latest.pt"))
-    load_world(out / "world_latest.pt", module)
+    weights = out / "world_best.pt" if (out / "world_best.pt").exists() else out / "world_latest.pt"
+    module = build_world_module(artifact_world_config(weights))
+    load_world(weights, module)
     sampling = QuerySampling(cfg.world.num_anchors, cfg.min_moving_points, False)
     dataset = WorldWindowDataset(root, split, sigma, fitter, sampling)
     name = "demo" + ("" if steps == 4 else f"_steps{steps}") + ("" if split == "validation" else f"_{split}")

@@ -29,14 +29,22 @@ class WorldContext:
     anchor_uv: Tensor
     anchor_mask: Tensor
     instructions: list[str | None]
+    history: Tensor | None = None
+    history_valid: Tensor | None = None
+
+    def without_history(self) -> "WorldContext":
+        return WorldContext(self.rgb, self.image_valid, self.anchor_uv, self.anchor_mask, self.instructions)
 
     def to(self, device: torch.device) -> "WorldContext":
+        move = lambda t: None if t is None else t.to(device, non_blocking=True)
         return WorldContext(
             self.rgb.to(device, non_blocking=True),
             self.image_valid.to(device, non_blocking=True),
             self.anchor_uv.to(device, non_blocking=True),
             self.anchor_mask.to(device, non_blocking=True),
             self.instructions,
+            move(self.history),
+            move(self.history_valid),
         )
 
 

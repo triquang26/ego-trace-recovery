@@ -74,12 +74,14 @@ def train(cfg: Stage1Config, data_root: Path, out_dir: Path, module: WorldModule
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda u: warmup_cosine(u, total, cfg.warmup_fraction))
     state_path = out_dir / "train_state.pt"
     start = 0
+    best = float("inf")
     if state_path.exists():
         state = torch.load(state_path, map_location="cpu", weights_only=False)
         module.expert.load_state_dict(state["expert"])
         optimizer.load_state_dict(state["optimizer"])
         scheduler.load_state_dict(state["scheduler"])
         start = state["update"]
+        best = state.get("best_flow", best)
     accum = cfg.accumulation_steps
     sampler = MixtureBatchSampler([train_set.meta(i) for i in range(len(train_set))], cfg.mixture,
                                   cfg.micro_batch_size, cfg.max_null_text_fraction, (total - start) * accum,
@@ -119,11 +121,15 @@ def train(cfg: Stage1Config, data_root: Path, out_dir: Path, module: WorldModule
             log.write(json.dumps({"update": done, "eval": metrics}) + "\n")
             print(json.dumps({"update": done, "eval": metrics}), flush=True)
             module.train()
+            if metrics.get("flow", best) < best:
+                best = metrics["flow"]
+                artifact = world_artifact(module, fitter, normalizer, train_set.manifest.teacher_revision)
+                save_world(out_dir / "world_best.pt", {**artifact, "update": done, "eval": metrics})
         if done % cfg.checkpoint_every == 0 or done == total:
             artifact = world_artifact(module, fitter, normalizer, train_set.manifest.teacher_revision)
             module.model_revision = save_world(out_dir / "world_latest.pt", artifact)
             torch.save({"expert": module.expert.state_dict(), "optimizer": optimizer.state_dict(),
-                        "scheduler": scheduler.state_dict(), "update": done}, state_path)
+                        "scheduler": scheduler.state_dict(), "update": done, "best_flow": best}, state_path)
             if on_checkpoint:
                 on_checkpoint(out_dir)
     log.close()

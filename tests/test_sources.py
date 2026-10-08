@@ -49,6 +49,7 @@ def test_egodex_recordings_use_selected_description(tmp_path):
 
 def test_manifest_collect_reads_shard_entries(tmp_path):
     arrays = {"anchor_xyz": np.zeros((2, 3)), "intrinsics": np.eye(3), "trace_moving": np.zeros(2, bool),
+              "history": np.zeros((2, 8, 3)), "history_valid": np.ones((2, 8), bool),
               "rgb": np.zeros((4, 4, 3)), "image_valid": np.ones((4, 4), bool), "anchor_uv": np.zeros((2, 2)),
               "anchor_mask": np.ones(2, bool), "trace": np.zeros((2, 3, 3)), "trace_valid": np.ones((2, 3), bool),
               "trace_reliability": np.ones((2, 3))}
@@ -99,7 +100,7 @@ def test_spatracker_teacher_verifies_convention_and_outputs_world_tracks():
     when = np.array([0, 2])
     teacher = SpaTrackerTeacher(StubFront(), StubPredictor(1.0), resize, width=56, device="cpu")
     tracks = teacher.track(frames, query, when)
-    assert sorted(tracks.depth) == [0, 2] and tracks.intrinsics.shape == (5, 3, 3)
+    assert tracks.depth.shape[0] == 5 and tracks.intrinsics.shape == (5, 3, 3)
     assert tracks.points_world.shape == (2, 5, 3) and tracks.convention == "opencv"
     assert np.allclose(tracks.points_world[:, 4, 0] - tracks.points_world[:, 0, 0], 0.4)
     assert np.allclose(tracks.reliability, 0.9) and np.allclose(tracks.world_to_camera[1, 0, 3], -0.1)

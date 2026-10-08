@@ -9,7 +9,7 @@ class TeacherTracks:
     points_world: np.ndarray
     reliability: np.ndarray
     world_to_camera: np.ndarray
-    depth: dict[int, np.ndarray]
+    depth: np.ndarray
     convention: str
     revision: str
     intrinsics: np.ndarray | None = None

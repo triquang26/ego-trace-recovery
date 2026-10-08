@@ -6,13 +6,13 @@ import yaml
 
 @dataclass(frozen=True)
 class WorldConfig:
-    visual_encoder: str = "facebook/dinov2-small"
+    visual_encoder: str = "facebook/dinov2-base"
     visual_encoder_revision: str = "main"
     text_encoder: str = "google-t5/t5-small"
     text_encoder_revision: str = "main"
-    image_size: int = 224
-    patch_grid: int = 16
-    visual_dim: int = 384
+    image_size: int = 336
+    patch_grid: int = 24
+    visual_dim: int = 768
     pooled_grid: int = 8
     text_dim: int = 512
     text_max_length: int = 64
@@ -27,9 +27,10 @@ class WorldConfig:
     layers: int = 8
     heads: int = 8
     ffn_width: int = 2048
-    dropout: float = 0.0
+    dropout: float = 0.1
     horizon_seconds: float = 2.0
     future_steps: int = 32
+    history_steps: int = 8
     bspline_degree: int = 3
     free_control_points: int = 10
     uv_frequencies: int = 8
@@ -42,6 +43,11 @@ class WorldConfig:
     def future_offsets(self) -> list[float]:
         step = self.horizon_seconds / self.future_steps
         return [step * k for k in range(1, self.future_steps + 1)]
+
+    @property
+    def history_offsets(self) -> list[float]:
+        step = self.horizon_seconds / self.future_steps
+        return [-step * k for k in range(self.history_steps, 0, -1)]
 
 
 @dataclass(frozen=True)

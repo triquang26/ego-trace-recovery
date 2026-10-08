@@ -26,17 +26,21 @@ def evaluate(module, dataset, cfg: Stage1Config, fitter, device, autocast) -> di
             inputs = module.encode(context)
             outputs = module(inputs, noisy_controls(target.controls, noise, s), s)
             controls = module.sample_controls(inputs, cfg.world.trace_eval_solver_steps, generator)
+            blind = module.sample_controls(module.encode(context.without_history()), cfg.world.trace_eval_solver_steps,
+                                           generator)
         flow_sum += masked_flow_loss(outputs.velocity, noise - target.controls,
                                      context.anchor_mask & target.fit_valid).item()
         valid_sum += validity_loss(outputs.validity_logits, target.trace_valid, context.anchor_mask).item()
         batches += 1
         pred = fitter.decode(controls.double()).float()
         mask = context.anchor_mask[..., None].expand_as(target.trace_valid)
-        stats = {**trace_errors(pred, target, context.anchor_mask),
+        blind_errors = trace_errors(fitter.decode(blind.double()).float(), target, context.anchor_mask)
+        stats = {**trace_errors(pred, target, context.anchor_mask), "blind_ade_sum": blind_errors["ade_sum"],
                  **reconstruction_error(fitter, target, context.anchor_mask),
                  **validity_calibration(outputs.validity_logits, target.trace_valid, mask)}
         for key, value in stats.items():
             totals[key] = totals.get(key, 0) + value
     if not batches:
         return {}
-    return {"flow": flow_sum / batches, "validity": valid_sum / batches, **summarize(totals)}
+    blind = float(totals["blind_ade_sum"] / totals["ade_count"].clamp_min(1))
+    return {"flow": flow_sum / batches, "validity": valid_sum / batches, **summarize(totals), "ade_no_history": blind}

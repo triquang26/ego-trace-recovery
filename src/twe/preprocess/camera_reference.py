@@ -38,16 +38,14 @@ def moving_points(points_camera: np.ndarray, valid: np.ndarray, intrinsics: np.n
     return np.nan_to_num(np.linalg.norm(high - low, axis=-1)) >= threshold_px
 
 
-def relative_displacements(
-    points_camera: np.ndarray, reliability: np.ndarray, scale: float, reliability_threshold: float
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    origin = points_camera[:, :1]
-    future = points_camera[:, 1:]
-    displacement = (future - origin) / scale
-    finite = np.isfinite(future).all(-1) & np.isfinite(origin).all(-1)
-    positive = (future[..., 2] > 0) & (origin[..., 2] > 0)
-    future_reliability = np.where(np.isfinite(reliability[:, 1:]), reliability[:, 1:], 0.0)
-    future_reliability = np.minimum(future_reliability, np.nan_to_num(reliability[:, :1], nan=0.0))
-    valid = finite & positive & (future_reliability >= reliability_threshold)
+def relative_displacements(points_camera: np.ndarray, reliability: np.ndarray, scale: float,
+                           reliability_threshold: float, origin: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    anchor = points_camera[:, origin : origin + 1]
+    displacement = (points_camera - anchor) / scale
+    finite = np.isfinite(points_camera).all(-1) & np.isfinite(anchor).all(-1)
+    positive = (points_camera[..., 2] > 0) & (anchor[..., 2] > 0)
+    step_reliability = np.where(np.isfinite(reliability), reliability, 0.0)
+    step_reliability = np.minimum(step_reliability, step_reliability[:, origin : origin + 1])
+    valid = finite & positive & (step_reliability >= reliability_threshold)
     displacement = np.where(valid[..., None], displacement, 0.0).astype(np.float32)
-    return displacement, valid, np.where(valid, future_reliability, 0.0).astype(np.float32)
+    return displacement, valid, np.where(valid, step_reliability, 0.0).astype(np.float32)

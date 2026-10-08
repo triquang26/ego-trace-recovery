@@ -8,10 +8,11 @@ from twe.training.objective import masked_flow_loss, validity_loss
 
 def make_context(batch=2, points=64):
     torch.manual_seed(3)
-    rgb = torch.rand(batch, 3, 224, 224)
-    valid = torch.ones(batch, 224, 224, dtype=torch.bool)
-    valid[1, :40] = False
-    valid[1, -40:] = False
+    size = TINY_WORLD.image_size
+    rgb = torch.rand(batch, 3, size, size)
+    valid = torch.ones(batch, size, size, dtype=torch.bool)
+    valid[1, :56] = False
+    valid[1, -56:] = False
     rgb[~valid[:, None].expand_as(rgb)] = 0
     uv = torch.rand(batch, points, 2) * 0.6 + 0.2
     mask = torch.ones(batch, points, dtype=torch.bool)
@@ -22,7 +23,8 @@ def test_shapes_and_permutation_equivariance():
     module = tiny_module().eval()
     context = make_context()
     inputs = module.encode(context)
-    assert inputs.visual.shape == (2, 64, 384) and inputs.anchor_features.shape == (2, 64, 384)
+    dim = TINY_WORLD.visual_dim
+    assert inputs.visual.shape == (2, 64, dim) and inputs.anchor_features.shape == (2, 64, dim)
     noisy = torch.randn(2, 64, 10, 3)
     s = torch.tensor([0.3, 1.0])
     out = module(inputs, noisy, s)
@@ -69,8 +71,9 @@ def test_anchor_selection_current_only_and_deterministic():
     uv, mask = module.select_anchors(context.rgb, context.image_valid)
     uv2, _ = module.select_anchors(context.rgb.clone(), context.image_valid)
     assert torch.equal(uv, uv2) and uv.shape == (2, 64, 2)
-    rows = (uv[1, mask[1], 1] * 224).long()
-    assert context.image_valid[1, rows, 112].all()
+    size = TINY_WORLD.image_size
+    rows = (uv[1, mask[1], 1] * size).long()
+    assert context.image_valid[1, rows, size // 2].all()
     assert mask.all()
     chosen = uv[0]
     assert torch.cdist(chosen, chosen).add(torch.eye(64) * 9).min() > 0
@@ -98,3 +101,20 @@ def test_extract_features_contract():
     b = module.extract_features(context.rgb, context.image_valid, context.instructions)
     assert a.hidden.shape == (2, 64, TINY_WORLD.width) and torch.equal(a.hidden, b.hidden)
     assert a.anchor_mask.dtype == torch.bool and a.noise_protocol
+
+
+def test_history_changes_prediction_and_absence_is_supported():
+    module = tiny_module().eval()
+    context = make_context()
+    noisy = torch.randn(2, 64, 10, 3)
+    s = torch.ones(2)
+    base = module(module.encode(context), noisy, s).velocity
+    history = torch.randn(2, 64, TINY_WORLD.history_steps, 3)
+    valid = torch.ones(2, 64, TINY_WORLD.history_steps, dtype=torch.bool)
+    with_history = WorldContext(context.rgb, context.image_valid, context.anchor_uv, context.anchor_mask,
+                                context.instructions, history, valid)
+    moved = module(module.encode(with_history), noisy, s).velocity
+    assert not torch.allclose(base, moved)
+    masked = WorldContext(context.rgb, context.image_valid, context.anchor_uv, context.anchor_mask,
+                          context.instructions, history, torch.zeros_like(valid))
+    assert torch.allclose(base, module(module.encode(masked), noisy, s).velocity, atol=1e-6)

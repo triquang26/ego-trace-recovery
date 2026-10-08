@@ -11,7 +11,7 @@ TINY_WORLD = WorldConfig(width=64, layers=2, heads=4, ffn_width=128, time_embedd
 
 
 class StubVisual(nn.Module):
-    def __init__(self, dim: int = 384):
+    def __init__(self, dim: int = 768):
         super().__init__()
         torch.manual_seed(0)
         self.conv = nn.Conv2d(3, dim, 14, 14)

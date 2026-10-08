@@ -17,6 +17,8 @@ class QuerySampling:
     slots: int = 64
     min_points: int = 4
     randomize: bool = True
+    drop_all_history: float = 0.2
+    drop_point_history: float = 0.3
 
 
 def moving_rows(reader: ShardReader) -> np.ndarray:
@@ -53,6 +55,13 @@ class WorldWindowDataset(Dataset):
         count = int(torch.randint(min(self.sampling.min_points, limit), limit + 1, ()))
         return candidates[torch.randperm(len(candidates))[:count].numpy()]
 
+    def keep_history(self, count: int) -> torch.Tensor:
+        if not self.sampling.randomize:
+            return torch.ones(count, dtype=torch.bool)
+        if float(torch.rand(())) < self.sampling.drop_all_history:
+            return torch.zeros(count, dtype=torch.bool)
+        return torch.rand(count) >= self.sampling.drop_point_history
+
     def __getitem__(self, index: int) -> dict:
         reader, row = self.locate(index)
         moving = moving_rows(reader)[row]
@@ -73,12 +82,17 @@ class WorldWindowDataset(Dataset):
         uv[:count] = pick("anchor_uv").float()
         xyz = torch.zeros(slots, 3)
         xyz[:count] = pick("anchor_xyz").float()
+        history_valid = torch.zeros(slots, *reader.arrays["history_valid"].shape[2:], dtype=torch.bool)
+        history_valid[:count] = pick("history_valid") & self.keep_history(count)[:, None]
+        history = torch.zeros(slots, *reader.arrays["history"].shape[2:])
+        history[:count] = pick("history")
+        history = torch.where(history_valid[..., None], history / self.sigma, torch.zeros_like(history))
         return {
             "rgb": torch.from_numpy(np.array(reader.arrays["rgb"][row])),
             "image_valid": torch.from_numpy(np.array(reader.arrays["image_valid"][row])),
             "anchor_uv": uv, "anchor_mask": mask, "instruction": reader.metas[row].get("original_instruction"),
             "trace": trace, "trace_valid": valid, "controls": controls.float(), "fit_valid": fit_valid & mask,
-            "moving": mask.clone(), "anchor_xyz": xyz,
+            "moving": mask.clone(), "anchor_xyz": xyz, "history": history, "history_valid": history_valid,
             "intrinsics": torch.from_numpy(np.array(reader.arrays["intrinsics"][row])).float(),
         }
 
@@ -87,6 +101,6 @@ def collate(items: list[dict]) -> tuple[WorldContext, WorldTarget]:
     stack = lambda key: torch.stack([item[key] for item in items])
     rgb = stack("rgb").permute(0, 3, 1, 2).float() / 255.0
     context = WorldContext(rgb, stack("image_valid"), stack("anchor_uv"), stack("anchor_mask"),
-                           [item["instruction"] for item in items])
+                           [item["instruction"] for item in items], stack("history"), stack("history_valid"))
     target = WorldTarget(stack("controls"), stack("fit_valid"), stack("trace"), stack("trace_valid"), stack("moving"))
     return context, target

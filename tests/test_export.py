@@ -31,8 +31,10 @@ class RigidTeacher:
             points = points @ flip.T
             poses[:, :3, :3] = flip @ poses[:, :3, :3] @ flip.T
             poses[:, :3, 3] = poses[:, :3, 3] @ flip.T
-        depth = {int(f): np.full((48, 64), 4.0) for f in np.unique(query_frame)}
-        return TeacherTracks(points, np.ones((len(query_xy), count)), poses, depth, self.convention, self.revision)
+        depth = np.full((count, 48, 64), 4.0)
+        intrinsics = np.repeat(np.diag([400.0, 400.0, 1.0])[None], count, 0)
+        return TeacherTracks(points, np.ones((len(query_xy), count)), poses, depth, self.convention, self.revision,
+                             intrinsics)
 
 
 def grid_selector(rgb, valid):
@@ -52,16 +54,19 @@ def run_export(tmp_path, convention, timestamps, chunk_seconds=12.0):
 
 
 def test_export_matches_rigid_motion_in_both_conventions(tmp_path):
-    timestamps = np.arange(0, 3.0, 1 / 30)
-    for convention, chunk in (("opencv", 12.0), ("opengl", 12.0), ("opencv", 2.2)):
+    timestamps = np.arange(0, 4.0, 1 / 30)
+    for convention, chunk in (("opencv", 12.0), ("opengl", 12.0), ("opencv", 2.8)):
         writer, written, cfg = run_export(tmp_path / f"{convention}{chunk}", convention, timestamps, chunk)
-        assert written == len(writer) == 2
+        assert written == len(writer) == 3
         expected_x = 0.4 * np.asarray(cfg.future_offsets) / 4.0
-        for row in range(2):
-            trace = writer.arrays["trace"][row]
-            assert writer.arrays["trace_valid"][row].all()
-            assert np.allclose(trace[:, :, 0], expected_x[None], atol=1e-5)
-            assert np.allclose(trace[:, :, 1:], 0, atol=1e-6)
+        expected_history = 0.4 * np.asarray(cfg.history_offsets) / 4.0
+        arrays = writer.arrays
+        for row in range(3):
+            mask = arrays["anchor_mask"][row]
+            assert mask.all() and arrays["trace_valid"][row].all() and arrays["history_valid"][row].all()
+            assert np.allclose(arrays["trace"][row][:, :, 0], expected_x[None], atol=1e-5)
+            assert np.allclose(arrays["trace"][row][:, :, 1:], 0, atol=1e-6)
+            assert np.allclose(arrays["history"][row][:, :, 0], expected_history[None], atol=1e-5)
 
 
 def test_plan_chunks_keeps_every_window_inside_one_chunk():
@@ -77,12 +82,12 @@ def test_plan_chunks_keeps_every_window_inside_one_chunk():
 
 
 def test_export_marks_gap_invalid(tmp_path):
-    timestamps = np.concatenate([np.arange(0, 1.0, 1 / 30), np.arange(1.6, 3.0, 1 / 30)])
+    timestamps = np.concatenate([np.arange(0, 1.5, 1 / 30), np.arange(2.1, 4.0, 1 / 30)])
     writer, written, cfg = run_export(tmp_path, "opencv", timestamps)
     valid = writer.arrays["trace_valid"][0][0]
-    offsets = np.asarray(cfg.future_offsets)
-    assert not valid[(offsets > 1.0) & (offsets < 1.6)].any()
-    assert valid[offsets < 0.95].all()
+    offsets = np.asarray(cfg.future_offsets) + 0.5
+    assert not valid[(offsets > 1.5) & (offsets < 2.1)].any()
+    assert valid[offsets < 1.45].all()
 
 
 class LimitedTeacher(RigidTeacher):
@@ -99,7 +104,7 @@ class LimitedTeacher(RigidTeacher):
 
 
 def test_export_splits_chunk_on_out_of_memory(tmp_path):
-    timestamps = np.arange(0, 6.0, 1 / 30)
+    timestamps = np.arange(0, 6.5, 1 / 30)
     cfg = WorldConfig()
     frames = np.zeros((len(timestamps), 48, 64, 3), dtype=np.uint8)
     recording = Recording("rec", "unit", "rec", "push the cup", timestamps, lambda idx: frames[idx])

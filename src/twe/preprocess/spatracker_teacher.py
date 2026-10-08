@@ -69,8 +69,7 @@ class SpaTrackerTeacher:
         source_k = intrs.copy()
         source_k[:, :2, 2] += 0.5
         source_k = lift @ source_k
-        frames_used = {int(f): depth_maps[int(f)] for f in np.unique(query_frame)}
-        return TeacherTracks(points_world, reliability, np.linalg.inv(c2w), frames_used, "opencv", self.revision,
+        return TeacherTracks(points_world, reliability, np.linalg.inv(c2w), depth_maps, "opencv", self.revision,
                              source_k)
 
 
