@@ -54,7 +54,8 @@ def synthetic_window(rng: np.random.Generator, scene: dict, cfg: WorldConfig, wi
     history = -trace[:, :8][:, ::-1].copy()
     history_valid = trace_valid[:, :8].copy()
     arrays = {"anchor_xyz": anchor_xyz, "trace_moving": moving, "history": history, "history_valid": history_valid,
-              "intrinsics": intrinsics, "rgb": rgb, "image_valid": valid, "anchor_uv": uv, "anchor_mask": mask, "trace": trace,
+              "intrinsics": intrinsics, "rgb": rgb, "image_valid": valid, "anchor_uv": uv, "anchor_mask": mask,
+              "trace": trace,
               "trace_valid": trace_valid, "trace_reliability": trace_valid.astype(np.float32)}
     meta = {"sample_id": f"synthetic/{scene['recording_id']}/{window}",
             "source": "synthetic", "recording_id": scene["recording_id"], "split_group": scene["recording_id"],

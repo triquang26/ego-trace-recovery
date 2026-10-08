@@ -4,7 +4,7 @@ import torch
 from torch import Tensor
 
 COORDINATE_CONTRACT = "camera_t_relative_xyz_v1"
-PREPROCESSING_REVISION = "letterbox224_dinogrid16_entitypool128_moving_v3"
+PREPROCESSING_REVISION = "letterbox336_dinob24_entitypool128_history8_v4"
 NOISE_PROTOCOL = "fixed_seed_gaussian_s1_v1"
 POOLS = ("human_nominal", "human_corrective", "robot_nominal_video")
 

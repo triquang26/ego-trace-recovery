@@ -31,6 +31,15 @@ def draw_paths(canvas: Image.Image, pixels: np.ndarray, valid: np.ndarray, rows:
     return canvas
 
 
+def draw_history(canvas: Image.Image, pixels: np.ndarray, valid: np.ndarray, rows: np.ndarray) -> Image.Image:
+    draw = ImageDraw.Draw(canvas)
+    for i in rows:
+        line = [tuple(p) for p, ok in zip(pixels[i], valid[i]) if ok]
+        if len(line) > 1:
+            draw.line(line, fill=(240, 240, 240), width=2)
+    return canvas
+
+
 def top_down(points: np.ndarray, valid: np.ndarray, rows: np.ndarray, upto: int, size: int,
              extent: tuple[float, float, float, float] | None = None) -> Image.Image:
     canvas = Image.new("RGB", (size, size), BACKDROP)

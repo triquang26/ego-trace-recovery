@@ -7,7 +7,7 @@ from PIL import Image
 from twe.data.manifest import ShardEntry
 from twe.data.shards import ShardReader
 from twe.evaluation.demo_render import project, shared_extent
-from twe.evaluation.trace_style import absolute_points, draw_paths, grayscale, hstack, titled, top_down
+from twe.evaluation.trace_style import absolute_points, draw_history, draw_paths, grayscale, hstack, titled, top_down
 from twe.preprocess.letterbox import letterbox
 
 
@@ -41,6 +41,11 @@ def render_window(reader: ShardReader, row: int, frames: np.ndarray, times: np.n
     offsets = np.concatenate([[0.0], meta["future_offsets_seconds"]])
     side = size * upscale
     base = grayscale(Image.fromarray(arrays["rgb"]).resize((side, side)))
+    past = project(arrays["anchor_xyz"], arrays["history"], arrays["intrinsics"])[:, 1:] * upscale
+    past_valid = arrays["history_valid"]
+    past = np.concatenate([past, pixels[:, :1]], 1)
+    past_valid = np.concatenate([past_valid, np.ones((len(past_valid), 1), bool)], 1)
+    base = draw_history(base, past, past_valid, rows)
     images = []
     for frame, time in zip(frames, times):
         upto = int(np.searchsorted(offsets, time, side="right"))
