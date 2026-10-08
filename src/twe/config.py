@@ -66,6 +66,7 @@ class Stage1Config:
     endpoint_time_probability: float = 0.2
     max_null_text_fraction: float = 0.2
     validity_loss_weight: float = 0.1
+    motion_loss_weight: float = 0.2
     fit_regularization: float = 1e-3
     fit_min_valid_steps: int = 10
     fit_max_condition: float = 1e5

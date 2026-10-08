@@ -19,6 +19,8 @@ class QuerySampling:
     randomize: bool = True
     drop_all_history: float = 0.2
     drop_point_history: float = 0.3
+    moving_fraction: float = 0.5
+    text_dropout: float = 0.1
 
 
 def moving_rows(reader: ShardReader) -> np.ndarray:
@@ -47,13 +49,23 @@ class WorldWindowDataset(Dataset):
         reader, row = self.locate(index)
         return {**reader.metas[row], "pool": reader.entry.pool, "split": reader.entry.split}
 
-    def choose(self, index: int, candidates: np.ndarray) -> np.ndarray:
-        limit = min(self.sampling.slots, len(candidates))
-        if not self.sampling.randomize:
-            order = np.random.default_rng(index).permutation(len(candidates))
-            return candidates[np.sort(order[:limit])]
-        count = int(torch.randint(min(self.sampling.min_points, limit), limit + 1, ()))
-        return candidates[torch.randperm(len(candidates))[:count].numpy()]
+    def choose(self, index: int, moving: np.ndarray, static: np.ndarray) -> np.ndarray:
+        slots, fraction = self.sampling.slots, self.sampling.moving_fraction
+        if self.sampling.randomize:
+            total = int(torch.randint(self.sampling.min_points, slots + 1, ()))
+            order = lambda n: torch.randperm(n).numpy()
+        else:
+            total = slots
+            rng = np.random.default_rng(index)
+            order = rng.permutation
+        moving_count = min(len(moving), max(self.sampling.min_points, round(total * fraction)))
+        static_count = min(len(static), total - moving_count)
+        return np.concatenate([moving[order(len(moving))[:moving_count]], static[order(len(static))[:static_count]]])
+
+    def instruction(self, text: str | None) -> str | None:
+        if self.sampling.randomize and float(torch.rand(())) < self.sampling.text_dropout:
+            return None
+        return text
 
     def keep_history(self, count: int) -> torch.Tensor:
         if not self.sampling.randomize:
@@ -65,7 +77,8 @@ class WorldWindowDataset(Dataset):
     def __getitem__(self, index: int) -> dict:
         reader, row = self.locate(index)
         moving = moving_rows(reader)[row]
-        rows = self.choose(index, np.flatnonzero(moving))
+        tracked = np.asarray(reader.arrays["anchor_mask"][row]) & np.asarray(reader.arrays["trace_valid"][row]).any(-1)
+        rows = self.choose(index, np.flatnonzero(moving), np.flatnonzero(tracked & ~moving))
         slots, count = self.sampling.slots, len(rows)
         pick = lambda key: torch.from_numpy(np.array(reader.arrays[key][row])[rows])
         mask = torch.zeros(slots, dtype=torch.bool)
@@ -80,6 +93,8 @@ class WorldWindowDataset(Dataset):
         controls, fit_valid = self.fitter.fit(trace, weight * valid)
         uv = torch.zeros(slots, 2)
         uv[:count] = pick("anchor_uv").float()
+        labels = torch.zeros(slots, dtype=torch.bool)
+        labels[:count] = torch.from_numpy(moving[rows])
         xyz = torch.zeros(slots, 3)
         xyz[:count] = pick("anchor_xyz").float()
         history_valid = torch.zeros(slots, *reader.arrays["history_valid"].shape[2:], dtype=torch.bool)
@@ -90,9 +105,10 @@ class WorldWindowDataset(Dataset):
         return {
             "rgb": torch.from_numpy(np.array(reader.arrays["rgb"][row])),
             "image_valid": torch.from_numpy(np.array(reader.arrays["image_valid"][row])),
-            "anchor_uv": uv, "anchor_mask": mask, "instruction": reader.metas[row].get("original_instruction"),
+            "anchor_uv": uv, "anchor_mask": mask,
+            "instruction": self.instruction(reader.metas[row].get("original_instruction")),
             "trace": trace, "trace_valid": valid, "controls": controls.float(), "fit_valid": fit_valid & mask,
-            "moving": mask.clone(), "anchor_xyz": xyz, "history": history, "history_valid": history_valid,
+            "moving": labels, "anchor_xyz": xyz, "history": history, "history_valid": history_valid,
             "intrinsics": torch.from_numpy(np.array(reader.arrays["intrinsics"][row])).float(),
         }
 

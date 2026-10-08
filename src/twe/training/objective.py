@@ -29,6 +29,12 @@ def validity_loss(logits: Tensor, target: Tensor, anchor_mask: Tensor) -> Tensor
     return (loss * weight).sum() / (weight.sum() + 1e-6)
 
 
+def motion_loss(logits: Tensor, moving: Tensor, anchor_mask: Tensor) -> Tensor:
+    loss = F.binary_cross_entropy_with_logits(logits.float(), moving.float(), reduction="none")
+    weight = anchor_mask.float()
+    return (loss * weight).sum() / (weight.sum() + 1e-6)
+
+
 def warmup_cosine(step: int, total: int, warmup_fraction: float) -> float:
     warmup = max(1, int(total * warmup_fraction))
     if step < warmup:

@@ -12,6 +12,7 @@ warmup_fraction: 0.05
 endpoint_time_probability: 0.2
 max_null_text_fraction: 0.2
 validity_loss_weight: 0.1
+motion_loss_weight: 0.2
 fit_regularization: 0.001
 fit_min_valid_steps: 10
 fit_max_condition: 100000.0

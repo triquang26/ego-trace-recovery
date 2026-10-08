@@ -3,7 +3,7 @@ import torch
 from synthetic import TINY_WORLD, tiny_module
 from twe.contracts import WorldContext
 from twe.preprocess.current_anchors import select_anchors
-from twe.training.objective import masked_flow_loss, validity_loss
+from twe.training.objective import masked_flow_loss, motion_loss, validity_loss
 
 
 def make_context(batch=2, points=64):
@@ -58,6 +58,7 @@ def test_only_expert_receives_gradients():
     out = module(inputs, torch.randn(2, 64, 10, 3), torch.rand(2))
     loss = masked_flow_loss(out.velocity, torch.randn(2, 64, 10, 3), context.anchor_mask)
     loss = loss + validity_loss(out.validity_logits, torch.ones(2, 64, 32), context.anchor_mask)
+    loss = loss + motion_loss(out.motion_logits, torch.ones(2, 64, dtype=torch.bool), context.anchor_mask)
     loss.backward()
     assert all(p.grad is None for p in module.visual_encoder.parameters())
     assert all(p.grad is None for p in module.text_encoder.parameters())

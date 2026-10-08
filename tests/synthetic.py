@@ -7,7 +7,7 @@ from torch import nn
 from twe.config import Stage1Config, WorldConfig
 from twe.models.world_module import WorldModule
 
-TINY_WORLD = WorldConfig(width=64, layers=2, heads=4, ffn_width=128, time_embedding_dim=32)
+TINY_WORLD = WorldConfig(width=64, layers=2, heads=4, ffn_width=128, time_embedding_dim=32, dropout=0.0)
 
 
 class StubVisual(nn.Module):

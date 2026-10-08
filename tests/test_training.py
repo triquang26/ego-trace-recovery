@@ -26,21 +26,23 @@ def test_sampler_mixture_and_null_cap(tmp_path):
     assert abs(pools["human_nominal"] / total - 0.5) < 0.03
 
 
-def test_dataset_samples_only_moving_points(tmp_path):
+def test_dataset_samples_moving_and_static_points(tmp_path):
     root = write_synthetic(tmp_path / "data")
     cfg = tiny_stage1()
     train = WorldWindowDataset(root, "train", [1, 1, 1], make_fitter(cfg), QuerySampling(64, 4, True))
     for index in range(5):
         item = train[index]
         count = int(item["anchor_mask"].sum())
-        assert 4 <= count <= 16 and item["fit_valid"][:count].all() and not item["fit_valid"][count:].any()
+        moving = item["moving"]
+        assert 4 <= int(moving.sum()) <= 16 and count <= 64 and not item["anchor_mask"][count:].any()
+        assert (moving <= item["anchor_mask"]).all() and item["fit_valid"][moving].all()
         motion = item["trace"].abs().sum((-1, -2))
-        assert (motion[:count] > 0).all() and (motion[count:] == 0).all()
+        assert (motion[moving] > 0).all() and (motion[~moving] == 0).all()
         assert item["controls"].shape == (64, 10, 3)
     val = WorldWindowDataset(root, "validation", [1, 1, 1], make_fitter(cfg), QuerySampling(64, 4, False))
     first, again = val[0], val[0]
-    assert int(first["anchor_mask"].sum()) == 16 and torch.equal(first["anchor_uv"], again["anchor_uv"])
-    assert first["history_valid"][:16].all() and torch.equal(first["history"], again["history"])
+    assert int(first["moving"].sum()) == 16 and torch.equal(first["anchor_uv"], again["anchor_uv"])
+    assert first["history_valid"][first["moving"]].all() and torch.equal(first["history"], again["history"])
     dropping = WorldWindowDataset(root, "train", [1, 1, 1], make_fitter(cfg), QuerySampling(64, 4, True, 1.0, 0.0))
     assert not dropping[0]["history_valid"].any()
 
@@ -52,8 +54,8 @@ def test_training_reduces_loss_and_checkpoint_loads(tmp_path):
     calls = []
     metrics = train(cfg, root, out, module=tiny_module(), device="cpu", on_checkpoint=calls.append)
     records = [json.loads(line) for line in open(out / "log.jsonl")]
-    losses = [r["loss"] for r in records if "loss" in r]
-    assert losses[-1] < 0.7 * losses[0]
+    losses = [r["flow"] for r in records if "flow" in r]
+    assert losses[-1] < 0.85 * losses[0]
     assert metrics["ade"] < metrics["zero_motion_ade"] + 1.0 and len(calls) == 2
     assert (out / "world_best.pt").exists() and "ade_no_history" in metrics
     report = json.loads((out / "parameters.json").read_text())

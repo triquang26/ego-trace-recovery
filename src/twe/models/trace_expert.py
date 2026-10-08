@@ -27,6 +27,7 @@ class ExpertOutputs:
     hidden: Tensor
     velocity: Tensor
     validity_logits: Tensor
+    motion_logits: Tensor
 
 
 class TraceExpert(nn.Module):
@@ -50,6 +51,7 @@ class TraceExpert(nn.Module):
         self.norm = nn.LayerNorm(width)
         self.velocity_head = Head(width, cfg.free_control_points * 3)
         self.validity_head = Head(width, cfg.future_steps)
+        self.motion_head = Head(width, 1)
         for p in (self.visual_type, self.text_type, self.null_text, self.no_history):
             nn.init.normal_(p, std=0.02)
 
@@ -83,4 +85,4 @@ class TraceExpert(nn.Module):
             x = block(x, inputs.anchor_mask, context, context_mask)
         hidden = self.norm(x)
         velocity = self.velocity_head(hidden).view(batch, points, self.cfg.free_control_points, 3)
-        return ExpertOutputs(hidden, velocity, self.validity_head(hidden))
+        return ExpertOutputs(hidden, velocity, self.validity_head(hidden), self.motion_head(hidden)[..., 0])

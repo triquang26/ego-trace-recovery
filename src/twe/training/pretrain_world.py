@@ -15,7 +15,8 @@ from twe.preprocess.bspline_targets import BSplineTargets
 from twe.preprocess.normalizer import load_normalizer
 from twe.training.checkpoint import save_world, world_artifact
 from twe.training.evaluate import evaluate
-from twe.training.objective import masked_flow_loss, noisy_controls, sample_flow_time, validity_loss, warmup_cosine
+from twe.training.objective import (masked_flow_loss, motion_loss, noisy_controls, sample_flow_time, validity_loss,
+                                    warmup_cosine)
 
 
 def make_fitter(cfg: Stage1Config) -> BSplineTargets:
@@ -52,9 +53,12 @@ def train_step(module, context, target, cfg: Stage1Config, autocast) -> dict[str
         s = sample_flow_time(target.controls.shape[0], cfg.endpoint_time_probability, target.controls.device)
         noise = torch.randn_like(target.controls)
         outputs = module(inputs, noisy_controls(target.controls, noise, s), s)
+        guidance = module(inputs, torch.randn_like(noise), torch.ones_like(s))
     flow = masked_flow_loss(outputs.velocity, noise - target.controls, context.anchor_mask & target.fit_valid)
     valid = validity_loss(outputs.validity_logits, target.trace_valid, context.anchor_mask)
-    return {"loss": flow + cfg.validity_loss_weight * valid, "flow": flow, "validity": valid}
+    moving = motion_loss(guidance.motion_logits, target.moving, context.anchor_mask)
+    loss = flow + cfg.validity_loss_weight * valid + cfg.motion_loss_weight * moving
+    return {"loss": loss, "flow": flow, "validity": valid, "motion": moving}
 
 
 def train(cfg: Stage1Config, data_root: Path, out_dir: Path, module: WorldModule | None = None,
@@ -98,7 +102,7 @@ def train(cfg: Stage1Config, data_root: Path, out_dir: Path, module: WorldModule
     metrics: dict = {}
     for update in range(start, total):
         tick = time.time()
-        sums = {"loss": 0.0, "flow": 0.0, "validity": 0.0}
+        sums = {"loss": 0.0, "flow": 0.0, "validity": 0.0, "motion": 0.0}
         for _ in range(accum):
             context, target = next(batches)
             losses = train_step(module, context.to(device), target.to(device), cfg, autocast)
