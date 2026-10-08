@@ -65,7 +65,8 @@ def train_world(data: str, run: str, config: str = "configs/stage1.yaml", overri
 
 
 @app.function(gpu=GPU, volumes={VOLUME_PATH: volume}, secrets=[hf_secret], timeout=3600, cpu=8, memory=32768)
-def demo(data: str, run: str, count: int = 200, config: str = "configs/stage1.yaml") -> dict:
+def demo(data: str, run: str, count: int = 200, steps: int = 4, split: str = "validation",
+         config: str = "configs/stage1.yaml") -> dict:
     from twe.config import load_stage1_config
     from twe.data.dataset import QuerySampling, WorldWindowDataset
     from twe.evaluation.demo import DemoBuilder, build_demo
@@ -82,15 +83,17 @@ def demo(data: str, run: str, count: int = 200, config: str = "configs/stage1.ya
     module = build_world_module(artifact_world_config(out / "world_latest.pt"))
     load_world(out / "world_latest.pt", module)
     sampling = QuerySampling(cfg.world.num_anchors, cfg.min_moving_points, False)
-    dataset = WorldWindowDataset(root, "validation", sigma, fitter, sampling)
-    record = build_demo(DemoBuilder(module.to("cuda"), fitter, dataset, sigma, "cuda"), out / "demo", count)
+    dataset = WorldWindowDataset(root, split, sigma, fitter, sampling)
+    name = "demo" + ("" if steps == 4 else f"_steps{steps}") + ("" if split == "validation" else f"_{split}")
+    record = build_demo(DemoBuilder(module.to("cuda"), fitter, dataset, sigma, "cuda", steps), out / name, count)
     volume.commit()
-    sync_to_bucket(out / "demo", f"runs/{run}/demo")
+    sync_to_bucket(out / name, f"runs/{run}/{name}")
     return record["summary"]
 
 
 @app.local_entrypoint()
-def main(action: str = "smoke", data: str = "synthetic", run: str = "smoke", overrides: str = "") -> None:
+def main(action: str = "smoke", data: str = "synthetic", run: str = "smoke", overrides: str = "", steps: int = 4,
+         split: str = "validation") -> None:
     import json
 
     parsed = json.loads(overrides) if overrides else {}
@@ -102,7 +105,7 @@ def main(action: str = "smoke", data: str = "synthetic", run: str = "smoke", ove
     elif action == "normalizer":
         print(compute_normalizer.remote(data))
     elif action == "demo":
-        print(demo.remote(data, run))
+        print(demo.remote(data, run, steps=steps, split=split))
     elif action == "train":
         print(train_world.remote(data, run, overrides=parsed))
     else:
