@@ -20,6 +20,10 @@ class ExpertInputs:
     anchor_mask: Tensor
     history: Tensor
     history_valid: Tensor
+    grounded: Tensor
+    grounded_mask: Tensor
+    grounded_local: Tensor
+    alignment: Tensor
 
 
 @dataclass
@@ -37,6 +41,9 @@ class TraceExpert(nn.Module):
         self.cfg = cfg
         self.visual_proj = nn.Linear(cfg.visual_dim, width)
         self.text_proj = nn.Linear(cfg.text_dim, width)
+        self.grounded_proj = nn.Linear(cfg.text_dim, width)
+        self.grounded_type = nn.Parameter(torch.zeros(width))
+        self.local_grounding_proj = nn.Linear(cfg.text_dim + 1, width)
         self.register_buffer("visual_pos", sincos_2d(cfg.pooled_grid, width), persistent=False)
         self.visual_type = nn.Parameter(torch.zeros(width))
         self.text_type = nn.Parameter(torch.zeros(width))
@@ -52,7 +59,7 @@ class TraceExpert(nn.Module):
         self.velocity_head = Head(width, cfg.free_control_points * 3)
         self.validity_head = Head(width, cfg.future_steps)
         self.motion_head = Head(width, 1)
-        for p in (self.visual_type, self.text_type, self.null_text, self.no_history):
+        for p in (self.visual_type, self.text_type, self.null_text, self.no_history, self.grounded_type):
             nn.init.normal_(p, std=0.02)
 
     def context(self, inputs: ExpertInputs) -> tuple[Tensor, Tensor]:
@@ -63,7 +70,9 @@ class TraceExpert(nn.Module):
         text = torch.cat([first[:, None], text[:, 1:]], dim=1)
         text_mask = inputs.text_mask.clone()
         text_mask[:, 0] |= inputs.text_null
-        return torch.cat([visual, text], dim=1), torch.cat([inputs.visual_mask, text_mask], dim=1)
+        grounded = self.grounded_proj(inputs.grounded) + self.grounded_type
+        return (torch.cat([visual, grounded, text], dim=1),
+                torch.cat([inputs.visual_mask, inputs.grounded_mask, text_mask], dim=1))
 
     def history_embedding(self, inputs: ExpertInputs) -> Tensor:
         valid = inputs.history_valid.to(inputs.history.dtype)
@@ -80,6 +89,7 @@ class TraceExpert(nn.Module):
             + self.uv_proj(fourier_uv(inputs.anchor_uv, self.cfg.uv_frequencies))
             + self.time_embed(s)[:, None]
             + self.history_embedding(inputs)
+            + self.local_grounding_proj(torch.cat([inputs.grounded_local, inputs.alignment[..., None]], -1))
         ).float()
         for block in self.blocks:
             x = block(x, inputs.anchor_mask, context, context_mask)

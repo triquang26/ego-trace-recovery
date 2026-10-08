@@ -24,7 +24,7 @@ teacher_image = (
     .pip_install("opencv-python-headless", "einops", "einx", "easydict", "decord", "moviepy==1.0.0", "safetensors",
                  "scikit-learn", "scikit-image", "hydra-core", "omegaconf", "pycolmap==3.11.1", "pyceres==2.4",
                  "kornia==0.8.1", "timm", "jaxtyping", "rich", "evo", "flow_vis", "plotly", "matplotlib", "mediapy",
-                 "prettytable", "huggingface_hub<1.0", "transformers>=4.44,<5", "sentencepiece", "h5py", "av>=12",
+                 "prettytable", "huggingface_hub<1.0", "transformers>=4.44,<5", "h5py", "av>=12",
                  "pyyaml", "numpy<2",
                  "git+https://github.com/EasternJournalist/utils3d.git@d3a577acf0a9ad7e513a1416449a07b6f47d967f")
     .env({"HF_HOME": "/root/hf_cache", "PYTHONPATH": SPATRACKER, "PYTHONUNBUFFERED": "1"})

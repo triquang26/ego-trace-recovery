@@ -1,6 +1,6 @@
 # Trace World Expert
 
-Stage 1 của thiết kế ego-robot world model: pretrain trace world expert (DINOv2-Base 336px + T5-small frozen, trace transformer 8×512 có history token) bằng flow matching trên B-spline control points của future 3D point tracks.
+Stage 1 của thiết kế ego-robot world model: pretrain trace world expert: DINOv2-Base 336px và Grounding DINO tiny (feature ảnh–text đã trộn, frozen) làm encoder, trace transformer 8×512 có history token, head chuyển động cho grounding ngầm bằng flow matching trên B-spline control points của future 3D point tracks.
 
 ## Cấu trúc
 
@@ -70,6 +70,10 @@ Theo μ₀ (TraceExtract, Appendix A và `trace_dataset.py` của repo `Yoonkyo/
 - **Movement filter**: biên độ chiếu tương lai ≥ `moving_threshold_px` (10 px trên ảnh lưu) → `trace_moving`; `finalize` gán lại nhãn theo ngưỡng truyền vào.
 - **Train**: như μ₀, mỗi mẫu bốc N ∈ [`min_moving_points`, 64] điểm chuyển động; bỏ lịch sử của cả mẫu với xác suất 0.2 và của từng điểm với xác suất 0.3. Checkpoint tốt nhất theo validation flow lưu ở `world_best.pt`; eval báo cả `ade` và `ade_no_history`.
 - **Inference**: `WorldModule.extract_features` chọn 64 anchor từ frame hiện tại bằng cùng bộ chọn thực thể; không có lịch sử thì dùng embedding `no_history`.
+
+## Grounding ngầm
+
+Grounding DINO chỉ dùng làm encoder: token text và feature ảnh đa tỉ lệ sau feature enhancer. Không dùng box. Mỗi điểm nhận feature Grounding DINO tại uv (mức stride 8) và điểm căn chỉnh `max_j ⟨điểm, token_j⟩`; context của trace expert gồm token DINOv2 pooled, token Grounding DINO mức `grounding_context_level` và token text. Train bốc cả điểm chuyển động lẫn đứng yên (`moving_fraction`); head `motion` (BCE, forward riêng tại s = 1) học điểm nào sẽ chuyển động theo câu lệnh, `text_dropout` bỏ câu lệnh ngẫu nhiên.
 
 ## Dataset contract
 

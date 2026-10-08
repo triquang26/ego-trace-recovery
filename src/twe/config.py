@@ -8,13 +8,14 @@ import yaml
 class WorldConfig:
     visual_encoder: str = "facebook/dinov2-base"
     visual_encoder_revision: str = "main"
-    text_encoder: str = "google-t5/t5-small"
+    text_encoder: str = "IDEA-Research/grounding-dino-tiny"
     text_encoder_revision: str = "main"
     image_size: int = 336
     patch_grid: int = 24
     visual_dim: int = 768
     pooled_grid: int = 8
-    text_dim: int = 512
+    text_dim: int = 256
+    grounding_context_level: int = 2
     text_max_length: int = 64
     num_anchors: int = 64
     query_pool: int = 128

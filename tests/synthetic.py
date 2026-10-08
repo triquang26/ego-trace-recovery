@@ -2,9 +2,11 @@ import hashlib
 from dataclasses import replace
 
 import torch
+import torch.nn.functional as F
 from torch import nn
 
 from twe.config import Stage1Config, WorldConfig
+from twe.models.grounding_encoder import GroundingOutput
 from twe.models.world_module import WorldModule
 
 TINY_WORLD = WorldConfig(width=64, layers=2, heads=4, ffn_width=128, time_embedding_dim=32, dropout=0.0)
@@ -21,28 +23,37 @@ class StubVisual(nn.Module):
         return self.conv(rgb).permute(0, 2, 3, 1)
 
 
-class StubText(nn.Module):
-    def __init__(self, dim: int = 512, length: int = 64):
+class StubGrounding(nn.Module):
+    def __init__(self, dim: int = 256, length: int = 64):
         super().__init__()
         torch.manual_seed(1)
         self.embed = nn.Embedding(997, dim)
+        self.conv = nn.Conv2d(3, dim, 8, 8)
         self.length = length
-        self.revision = "stub-text"
+        self.revision = "stub-grounding"
 
-    def forward(self, instructions):
+    def forward(self, rgb, image_valid, instructions):
         device = self.embed.weight.device
-        ids = torch.zeros(len(instructions), self.length, dtype=torch.long, device=device)
-        mask = torch.zeros(len(instructions), self.length, dtype=torch.bool, device=device)
-        for row, text in enumerate(instructions):
-            for col, word in enumerate((text or "").split()):
+        words = [(text or ".").split()[: self.length] for text in instructions]
+        width = max(len(w) for w in words)
+        ids = torch.zeros(len(words), width, dtype=torch.long, device=device)
+        mask = torch.zeros(len(words), width, dtype=torch.bool, device=device)
+        for row, sentence in enumerate(words):
+            for col, word in enumerate(sentence):
                 ids[row, col] = int(hashlib.md5(word.encode()).hexdigest(), 16) % 997
                 mask[row, col] = True
+        text = self.embed(ids) * mask[..., None]
+        sentence = text.sum(1) / mask.sum(1, keepdim=True)
+        level = self.conv(rgb) + sentence[..., None, None]
+        maps = [level]
+        for _ in range(3):
+            maps.append(F.avg_pool2d(maps[-1], 2, ceil_mode=True))
         null = torch.tensor([not t for t in instructions], device=device)
-        return self.embed(ids) * mask[..., None], mask, null
+        return GroundingOutput(text, mask, null, maps)
 
 
 def tiny_module(cfg: WorldConfig = TINY_WORLD) -> WorldModule:
-    return WorldModule(cfg, StubVisual(), StubText())
+    return WorldModule(cfg, StubVisual(), StubGrounding())
 
 
 def tiny_stage1(**overrides) -> Stage1Config:

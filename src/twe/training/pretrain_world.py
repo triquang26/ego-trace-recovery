@@ -40,7 +40,7 @@ def parameter_report(module: WorldModule) -> dict:
     count = lambda m, trainable: sum(p.numel() for p in m.parameters() if p.requires_grad or not trainable)
     return {
         "visual_encoder": count(module.visual_encoder, False),
-        "text_encoder": count(module.text_encoder, False),
+        "grounding_encoder": count(module.grounding_encoder, False),
         "trace_expert": count(module.expert, False),
         "total": count(module, False),
         "trainable": count(module, True),

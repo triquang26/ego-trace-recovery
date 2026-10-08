@@ -11,7 +11,7 @@ GPU = os.environ.get("TWE_GPU", "A100-40GB")
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("ffmpeg")
-    .uv_pip_install("torch==2.8.0", "transformers>=4.44", "sentencepiece>=0.2", "numpy>=1.26", "pyyaml>=6",
+    .uv_pip_install("torch==2.8.0", "transformers>=4.44", "numpy>=1.26", "pyyaml>=6",
                     "huggingface_hub>=1.0", "av>=12", "h5py>=3.10", "matplotlib>=3.8")
     .env({"HF_HOME": "/vol/hf_cache", "PYTHONUNBUFFERED": "1"})
     .add_local_dir(ROOT / "configs", "/root/configs")

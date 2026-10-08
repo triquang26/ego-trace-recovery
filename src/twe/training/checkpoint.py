@@ -15,7 +15,7 @@ def world_artifact(module: WorldModule, fitter: BSplineTargets, normalizer: dict
     return {
         "world_config": asdict(module.cfg),
         "visual_encoder": getattr(module.visual_encoder, "revision", "custom"),
-        "text_encoder": getattr(module.text_encoder, "revision", "custom"),
+        "grounding_encoder": getattr(module.grounding_encoder, "revision", "custom"),
         "expert_state": module.expert.state_dict(),
         "normalizer": normalizer,
         "bspline_knots": fitter.knots.tolist(),

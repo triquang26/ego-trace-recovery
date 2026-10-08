@@ -61,7 +61,7 @@ def test_only_expert_receives_gradients():
     loss = loss + motion_loss(out.motion_logits, torch.ones(2, 64, dtype=torch.bool), context.anchor_mask)
     loss.backward()
     assert all(p.grad is None for p in module.visual_encoder.parameters())
-    assert all(p.grad is None for p in module.text_encoder.parameters())
+    assert all(p.grad is None for p in module.grounding_encoder.parameters())
     grads = [p.grad for p in module.expert.parameters() if p.requires_grad]
     assert sum(g is not None for g in grads) == len(grads)
 
@@ -119,3 +119,19 @@ def test_history_changes_prediction_and_absence_is_supported():
     masked = WorldContext(context.rgb, context.image_valid, context.anchor_uv, context.anchor_mask,
                           context.instructions, history, torch.zeros_like(valid))
     assert torch.allclose(base, module(module.encode(masked), noisy, s).velocity, atol=1e-6)
+
+
+def test_grounding_helpers():
+    from twe.models.grounding_encoder import alignment_scores, level_shapes, prompt, split_levels
+
+    shapes = level_shapes(336, 336, 4)
+    assert shapes == [(42, 42), (21, 21), (11, 11), (6, 6)]
+    tokens = torch.randn(2, sum(h * w for h, w in shapes), 8)
+    maps = split_levels(tokens, shapes)
+    assert [tuple(m.shape[-2:]) for m in maps] == shapes and torch.equal(maps[1][0, :, 0, 0], tokens[0, 42 * 42])
+    assert prompt("Put the Cup") == "put the cup." and prompt(None) == "."
+    local = torch.tensor([[[1.0, 0.0], [0.0, 1.0]]])
+    text = torch.tensor([[[2.0, 0.0], [0.0, 0.0]]])
+    scores = alignment_scores(local, text, torch.tensor([[True, False]]), torch.tensor([False]))
+    assert scores[0, 0] > scores[0, 1]
+    assert (alignment_scores(local, text, torch.tensor([[True, False]]), torch.tensor([True])) == 0).all()

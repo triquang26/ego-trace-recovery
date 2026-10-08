@@ -3,29 +3,37 @@ from torch import Tensor, nn
 
 from twe.config import WorldConfig
 from twe.contracts import NOISE_PROTOCOL, PREPROCESSING_REVISION, WorldContext, WorldFeatures
+from twe.models.grounding_encoder import alignment_scores, map_validity
 from twe.models.trace_expert import ExpertInputs, ExpertOutputs, TraceExpert
 from twe.preprocess.current_anchors import patch_validity, pool_visual, sample_anchor_features, select_anchors
 
 
 class WorldModule(nn.Module):
-    def __init__(self, cfg: WorldConfig, visual_encoder: nn.Module, text_encoder: nn.Module):
+    def __init__(self, cfg: WorldConfig, visual_encoder: nn.Module, grounding_encoder: nn.Module):
         super().__init__()
         self.cfg = cfg
         self.visual_encoder = visual_encoder.requires_grad_(False)
-        self.text_encoder = text_encoder.requires_grad_(False)
+        self.grounding_encoder = grounding_encoder.requires_grad_(False)
         self.expert = TraceExpert(cfg)
         self.model_revision = "untrained"
 
     def encode(self, context: WorldContext) -> ExpertInputs:
         with torch.no_grad():
             patches = self.visual_encoder(context.rgb).float()
-            text, text_mask, text_null = self.text_encoder(context.instructions)
+            grounding = self.grounding_encoder(context.rgb, context.image_valid, context.instructions)
         weight = patch_validity(context.image_valid, self.cfg.patch_grid)
         visual, visual_mask = pool_visual(patches, weight, self.cfg.pooled_grid)
         anchors = sample_anchor_features(patches, context.anchor_uv)
+        fine = grounding.maps[0].permute(0, 2, 3, 1)
+        grounded_local = sample_anchor_features(fine, context.anchor_uv)
+        alignment = alignment_scores(grounded_local, grounding.text, grounding.text_mask, grounding.null)
+        coarse = grounding.maps[self.cfg.grounding_context_level]
+        grounded = coarse.flatten(2).transpose(1, 2)
+        grounded_mask = map_validity(context.image_valid, tuple(coarse.shape[-2:])).flatten(1)
         history, history_valid = self.history_inputs(context)
-        return ExpertInputs(visual, visual_mask, text.float(), text_mask, text_null,
-                            anchors, context.anchor_uv, context.anchor_mask, history, history_valid)
+        return ExpertInputs(visual, visual_mask, grounding.text, grounding.text_mask, grounding.null,
+                            anchors, context.anchor_uv, context.anchor_mask, history, history_valid,
+                            grounded, grounded_mask, grounded_local, alignment)
 
     def history_inputs(self, context: WorldContext) -> tuple[Tensor, Tensor]:
         if context.history is not None:
@@ -74,9 +82,9 @@ class WorldModule(nn.Module):
 
 
 def build_world_module(cfg: WorldConfig) -> WorldModule:
-    from twe.models.text_encoder import T5TextEncoder
+    from twe.models.grounding_encoder import GroundingDinoEncoder
     from twe.models.visual_encoder import DinoVisualEncoder
 
     visual = DinoVisualEncoder(cfg.visual_encoder, cfg.visual_encoder_revision, cfg.patch_grid)
-    text = T5TextEncoder(cfg.text_encoder, cfg.text_encoder_revision, cfg.text_max_length)
-    return WorldModule(cfg, visual, text)
+    grounding = GroundingDinoEncoder(cfg.text_encoder, cfg.text_encoder_revision, cfg.text_max_length)
+    return WorldModule(cfg, visual, grounding)
