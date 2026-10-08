@@ -6,6 +6,7 @@ import torch
 
 from twe.data.dataset import collate
 from twe.evaluation.demo_render import render_case
+from twe.preprocess.screen_space import from_screen
 
 @torch.no_grad()
 def predict(module, fitter, context, seed: int, steps: int) -> np.ndarray:
@@ -101,17 +102,25 @@ class DemoBuilder:
                          "_scores": probs.tolist(), "_labels": target.moving[0].numpy()[mask].tolist()})
         return rows
 
+    def displacement(self, item: dict, normalized: np.ndarray) -> np.ndarray:
+        values = normalized * self.sigma
+        if getattr(self.dataset, "space", "camera") == "camera":
+            return values
+        size = item["rgb"].shape[0]
+        return from_screen(item["anchor_xyz"].numpy(), values, item["intrinsics"].numpy(), size)
+
     def render(self, out: Path, name: str, index: int, variants: list[tuple[str, object, int]], teacher: bool):
         _, _, item = self.context(index)
         rows = np.flatnonzero(item["anchor_mask"].numpy())
         valid = item["trace_valid"].numpy()
-        panels = [("Teacher", item["trace"].numpy() * self.sigma, valid)] if teacher else []
+        panels = [("Teacher", self.displacement(item, item["trace"].numpy()), valid)] if teacher else []
         preds = []
         for title, instruction, seed, *flags in variants:
             context, _, _ = self.context(index, instruction, flags[0] if flags else True)
             pred = predict(self.module, self.fitter, context, seed, self.steps)[0]
             preds.append(pred)
-            panels.append((title, pred * self.sigma, np.ones_like(valid), motion_probability(self.module, context)))
+            panels.append((title, self.displacement(item, pred), np.ones_like(valid),
+                           motion_probability(self.module, context)))
         meta = self.dataset.meta(index)
         render_case(out / f"{name}.png", item["rgb"].numpy(), item["anchor_xyz"].numpy(), item["intrinsics"].numpy(),
                     panels, rows, f"{meta['sample_id']} | {item['instruction'] or 'no instruction'}")

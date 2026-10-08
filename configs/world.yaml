@@ -24,6 +24,7 @@ dropout: 0.1
 horizon_seconds: 2.0
 future_steps: 32
 history_steps: 8
+target_space: screen
 bspline_degree: 3
 free_control_points: 10
 uv_frequencies: 8

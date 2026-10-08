@@ -68,8 +68,10 @@ def train(cfg: Stage1Config, data_root: Path, out_dir: Path, module: WorldModule
     out_dir.mkdir(parents=True, exist_ok=True)
     normalizer = load_normalizer(data_root / "normalizer.json")
     fitter = make_fitter(cfg)
-    train_set = WorldWindowDataset(data_root, "train", normalizer["sigma"], fitter, query_sampling(cfg, True))
-    val_set = WorldWindowDataset(data_root, "validation", normalizer["sigma"], fitter, query_sampling(cfg, False))
+    space = cfg.world.target_space
+    sigma = normalizer[f"sigma_{space}"]
+    train_set = WorldWindowDataset(data_root, "train", sigma, fitter, query_sampling(cfg, True), space)
+    val_set = WorldWindowDataset(data_root, "validation", sigma, fitter, query_sampling(cfg, False), space)
     module = (module or build_world_module(cfg.world)).to(device)
     (out_dir / "parameters.json").write_text(json.dumps(parameter_report(module), indent=2))
     optimizer = torch.optim.AdamW(parameter_groups(module, cfg.weight_decay), lr=cfg.learning_rate,

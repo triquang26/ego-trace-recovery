@@ -10,6 +10,7 @@ from twe.contracts import WorldContext, WorldTarget
 from twe.data.manifest import Manifest
 from twe.data.shards import ShardReader
 from twe.preprocess.bspline_targets import BSplineTargets
+from twe.preprocess.screen_space import convert
 
 
 @dataclass(frozen=True)
@@ -29,8 +30,10 @@ def moving_rows(reader: ShardReader) -> np.ndarray:
 
 
 class WorldWindowDataset(Dataset):
-    def __init__(self, root: Path, split: str, sigma, fitter: BSplineTargets, sampling: QuerySampling):
+    def __init__(self, root: Path, split: str, sigma, fitter: BSplineTargets, sampling: QuerySampling,
+                 space: str = "screen"):
         self.root = Path(root)
+        self.space = space
         self.manifest = Manifest.read(self.root)
         self.readers = [ShardReader(self.root, entry) for entry in self.manifest.select(split)]
         self.sampling = sampling
@@ -84,37 +87,34 @@ class WorldWindowDataset(Dataset):
         tracked = np.asarray(reader.arrays["anchor_mask"][row]) & np.asarray(reader.arrays["trace_valid"][row]).any(-1)
         rows = self.choose(index, np.flatnonzero(moving), np.flatnonzero(tracked & ~moving))
         slots, count = self.sampling.slots, len(rows)
-        pick = lambda key: torch.from_numpy(np.array(reader.arrays[key][row])[rows])
-        mask = torch.zeros(slots, dtype=torch.bool)
-        mask[:count] = True
-        valid = torch.zeros(slots, *reader.arrays["trace_valid"].shape[2:], dtype=torch.bool)
-        valid[:count] = pick("trace_valid")
-        raw = torch.zeros(slots, *reader.arrays["trace"].shape[2:])
-        raw[:count] = pick("trace")
-        trace = torch.where(valid[..., None], raw / self.sigma, torch.zeros_like(raw))
-        weight = torch.zeros(valid.shape)
-        weight[:count] = pick("trace_reliability")
-        controls, fit_valid = self.fitter.fit(trace, weight * valid)
-        uv = torch.zeros(slots, 2)
-        uv[:count] = pick("anchor_uv").float()
-        labels = torch.zeros(slots, dtype=torch.bool)
-        labels[:count] = torch.from_numpy(moving[rows])
-        xyz = torch.zeros(slots, 3)
-        xyz[:count] = pick("anchor_xyz").float()
-        history_valid = torch.zeros(slots, *reader.arrays["history_valid"].shape[2:], dtype=torch.bool)
-        history_valid[:count] = pick("history_valid") & self.keep_history(count)[:, None]
-        history = torch.zeros(slots, *reader.arrays["history"].shape[2:])
-        history[:count] = pick("history")
-        history = torch.where(history_valid[..., None], history / self.sigma, torch.zeros_like(history))
+        pick = lambda key: np.array(reader.arrays[key][row])[rows]
+        intrinsics = np.array(reader.arrays["intrinsics"][row])
+        size = reader.arrays["rgb"].shape[1]
+        xyz = pick("anchor_xyz")
+        trace, valid = convert(xyz, pick("trace"), pick("trace_valid"), intrinsics, size, self.space)
+        history, seen = convert(xyz, pick("history"), pick("history_valid"), intrinsics, size, self.space)
+        seen = seen & self.keep_history(count).numpy()[:, None]
+        valid, seen = pad(valid, slots), pad(seen, slots)
+        trace = torch.where(valid[..., None], pad(trace, slots) / self.sigma, 0.0)
+        history = torch.where(seen[..., None], pad(history, slots) / self.sigma, 0.0)
+        weight = pad(pick("trace_reliability"), slots) * valid
+        controls, fit_valid = self.fitter.fit(trace, weight)
+        mask = pad(np.ones(count, dtype=bool), slots)
         return {
             "rgb": torch.from_numpy(np.array(reader.arrays["rgb"][row])),
             "image_valid": torch.from_numpy(np.array(reader.arrays["image_valid"][row])),
-            "anchor_uv": uv, "anchor_mask": mask,
+            "anchor_uv": pad(pick("anchor_uv"), slots).float(), "anchor_mask": mask,
             "instruction": self.instruction(reader.metas[row]),
             "trace": trace, "trace_valid": valid, "controls": controls.float(), "fit_valid": fit_valid & mask,
-            "moving": labels, "anchor_xyz": xyz, "history": history, "history_valid": history_valid,
-            "intrinsics": torch.from_numpy(np.array(reader.arrays["intrinsics"][row])).float(),
+            "moving": pad(moving[rows], slots), "anchor_xyz": pad(xyz, slots).float(),
+            "history": history, "history_valid": seen, "intrinsics": torch.from_numpy(intrinsics).float(),
         }
+
+
+def pad(values: np.ndarray, slots: int) -> torch.Tensor:
+    out = torch.zeros((slots, *values.shape[1:]), dtype=torch.from_numpy(values[:0]).dtype)
+    out[: len(values)] = torch.from_numpy(np.ascontiguousarray(values))
+    return out
 
 
 def collate(items: list[dict]) -> tuple[WorldContext, WorldTarget]:

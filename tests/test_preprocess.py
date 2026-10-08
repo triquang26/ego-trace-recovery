@@ -98,7 +98,7 @@ def test_normalizer_uses_only_moving_points(tmp_path):
     from twe.preprocess.normalizer import load_normalizer
 
     root = write_synthetic(tmp_path / "data")
-    sigma = np.asarray(load_normalizer(root / "normalizer.json")["sigma"])
+    sigma = np.asarray(load_normalizer(root / "normalizer.json")["sigma_camera"])
     assert sigma[:2].max() > 0.05
 
 
@@ -120,3 +120,20 @@ def test_stage1_overrides_reach_world_config():
     root = Path(__file__).resolve().parent.parent
     cfg = load_stage1_config(root / "configs/stage1.yaml", {"world.dropout": 0.1, "optimizer_updates": 7})
     assert cfg.world.dropout == 0.1 and cfg.optimizer_updates == 7
+
+
+def test_screen_space_round_trip_and_scale_invariance():
+    from twe.preprocess.screen_space import from_screen, to_screen
+
+    k = np.array([[300.0, 0, 168], [0, 300.0, 168], [0, 0, 1]])
+    anchor = np.array([[0.2, -0.1, 1.5], [0.0, 0.3, 2.0]])
+    disp = np.zeros((2, 4, 3))
+    disp[0, :, 0] = [0.1, 0.2, 0.3, 0.4]
+    disp[1, :, 2] = [-0.2, -0.4, -0.6, -0.8]
+    valid = np.ones((2, 4), bool)
+    delta, ok = to_screen(anchor, disp, valid, k, 336)
+    assert ok.all() and np.allclose(delta[0, :, 0], 300 * disp[0, :, 0] / 1.5 / 336)
+    assert np.allclose(delta[1, :, 2], np.log((2.0 + disp[1, :, 2]) / 2.0))
+    assert np.allclose(from_screen(anchor, delta, k, 336), disp, atol=1e-5)
+    scaled, _ = to_screen(anchor * 3, disp * 3, valid, k, 336)
+    assert np.allclose(scaled, delta, atol=1e-6)

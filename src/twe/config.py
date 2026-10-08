@@ -32,6 +32,7 @@ class WorldConfig:
     horizon_seconds: float = 2.0
     future_steps: int = 32
     history_steps: int = 8
+    target_space: str = "screen"
     bspline_degree: int = 3
     free_control_points: int = 10
     uv_frequencies: int = 8
