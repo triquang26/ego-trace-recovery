@@ -1,6 +1,7 @@
 import numpy as np
 
 TARGET_SPACES = ("camera", "screen")
+MIN_DEPTH_RATIO = 0.2
 
 
 def project(points: np.ndarray, intrinsics: np.ndarray, size: int) -> tuple[np.ndarray, np.ndarray]:
@@ -15,7 +16,8 @@ def to_screen(anchor_xyz: np.ndarray, displacement: np.ndarray, valid: np.ndarra
     origin_uv, origin_z = project(anchor_xyz, intrinsics, size)
     uv, z = project(anchor_xyz[:, None] + displacement, intrinsics, size)
     delta = np.concatenate([uv - origin_uv[:, None], (np.log(z) - np.log(origin_z)[:, None])[..., None]], -1)
-    ok = valid & np.isfinite(delta).all(-1)
+    inside = ((uv > -0.5) & (uv < 1.5)).all(-1) & (z > MIN_DEPTH_RATIO * origin_z[:, None])
+    ok = valid & np.isfinite(delta).all(-1) & np.nan_to_num(inside, nan=False).astype(bool)
     return np.where(ok[..., None], delta, 0.0).astype(np.float32), ok
 
 
