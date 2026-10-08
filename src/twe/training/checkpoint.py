@@ -16,7 +16,7 @@ def world_artifact(module: WorldModule, fitter: BSplineTargets, normalizer: dict
         "world_config": asdict(module.cfg),
         "visual_encoder": getattr(module.visual_encoder, "revision", "custom"),
         "grounding_encoder": getattr(module.grounding_encoder, "revision", "custom"),
-        "expert_state": module.expert.state_dict(),
+        "trainable_state": module.trainable_state(),
         "normalizer": normalizer,
         "bspline_knots": fitter.knots.tolist(),
         "bspline_free_basis": fitter.free_basis.tolist(),
@@ -29,7 +29,7 @@ def world_artifact(module: WorldModule, fitter: BSplineTargets, normalizer: dict
 
 def artifact_hash(artifact: dict) -> str:
     buffer = io.BytesIO()
-    torch.save(artifact["expert_state"], buffer)
+    torch.save(artifact.get("trainable_state", artifact.get("expert_state")), buffer)
     return hashlib.sha256(buffer.getvalue()).hexdigest()[:16]
 
 
@@ -52,6 +52,9 @@ def load_world(path: Path, module: WorldModule) -> dict:
             raise ValueError(f"{key} mismatch: {artifact[key]} != {expected}")
     if WorldConfig(**artifact["world_config"]) != module.cfg:
         raise ValueError("world config mismatch")
-    module.expert.load_state_dict(artifact["expert_state"])
+    if "trainable_state" in artifact:
+        module.load_trainable_state(artifact["trainable_state"])
+    else:
+        module.expert.load_state_dict(artifact["expert_state"])
     module.model_revision = artifact["model_revision"]
     return artifact

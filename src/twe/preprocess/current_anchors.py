@@ -9,11 +9,9 @@ def patch_validity(image_valid: Tensor, grid: int) -> Tensor:
 
 
 def pool_visual(patch_features: Tensor, weight: Tensor, pooled_grid: int) -> tuple[Tensor, Tensor]:
-    batch, grid, _, dim = patch_features.shape
-    factor = grid // pooled_grid
-    features = patch_features.permute(0, 3, 1, 2) * weight[:, None]
-    summed = F.avg_pool2d(features, factor) * factor * factor
-    total = F.avg_pool2d(weight[:, None], factor)[:, 0] * factor * factor
+    batch, _, _, dim = patch_features.shape
+    summed = F.adaptive_avg_pool2d(patch_features.permute(0, 3, 1, 2) * weight[:, None], pooled_grid)
+    total = F.adaptive_avg_pool2d(weight[:, None], pooled_grid)[:, 0]
     pooled = summed / total.clamp_min(1e-6)[:, None]
     tokens = pooled.permute(0, 2, 3, 1).reshape(batch, pooled_grid * pooled_grid, dim)
     return tokens, total.reshape(batch, -1) > 0

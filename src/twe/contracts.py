@@ -35,6 +35,10 @@ class WorldContext:
     def without_history(self) -> "WorldContext":
         return WorldContext(self.rgb, self.image_valid, self.anchor_uv, self.anchor_mask, self.instructions)
 
+    def with_instructions(self, instructions: list[str | None]) -> "WorldContext":
+        return WorldContext(self.rgb, self.image_valid, self.anchor_uv, self.anchor_mask, instructions,
+                            self.history, self.history_valid)
+
     def to(self, device: torch.device) -> "WorldContext":
         move = lambda t: None if t is None else t.to(device, non_blocking=True)
         return WorldContext(

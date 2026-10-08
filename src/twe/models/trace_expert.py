@@ -24,6 +24,7 @@ class ExpertInputs:
     grounded_mask: Tensor
     grounded_local: Tensor
     alignment: Tensor
+    fused_local: Tensor | None = None
 
 
 @dataclass
@@ -39,7 +40,8 @@ class TraceExpert(nn.Module):
         super().__init__()
         width = cfg.width
         self.cfg = cfg
-        self.visual_proj = nn.Linear(cfg.visual_dim, width)
+        self.visual_proj = nn.Linear(cfg.text_dim if cfg.fusion_layers else cfg.visual_dim, width)
+        self.fused_local_proj = nn.Linear(cfg.text_dim, width) if cfg.fusion_layers else None
         self.text_proj = nn.Linear(cfg.text_dim, width)
         self.grounded_proj = nn.Linear(cfg.text_dim, width)
         self.grounded_type = nn.Parameter(torch.zeros(width))
@@ -80,16 +82,22 @@ class TraceExpert(nn.Module):
         seen = inputs.history_valid.any(-1, keepdim=True)
         return torch.where(seen, self.history_proj(features), self.no_history.to(features.dtype))
 
+    def point_features(self, inputs: ExpertInputs) -> Tensor:
+        x = (self.feature_proj(inputs.anchor_features)
+             + self.uv_proj(fourier_uv(inputs.anchor_uv, self.cfg.uv_frequencies))
+             + self.history_embedding(inputs)
+             + self.local_grounding_proj(torch.cat([inputs.grounded_local, inputs.alignment[..., None]], -1)))
+        if self.fused_local_proj is not None:
+            x = x + self.fused_local_proj(inputs.fused_local)
+        return x
+
     def forward(self, inputs: ExpertInputs, noisy_controls: Tensor, s: Tensor) -> ExpertOutputs:
         batch, points = noisy_controls.shape[:2]
         context, context_mask = self.context(inputs)
         x = (
             self.control_proj(noisy_controls.flatten(2))
-            + self.feature_proj(inputs.anchor_features)
-            + self.uv_proj(fourier_uv(inputs.anchor_uv, self.cfg.uv_frequencies))
+            + self.point_features(inputs)
             + self.time_embed(s)[:, None]
-            + self.history_embedding(inputs)
-            + self.local_grounding_proj(torch.cat([inputs.grounded_local, inputs.alignment[..., None]], -1))
         ).float()
         for block in self.blocks:
             x = block(x, inputs.anchor_mask, context, context_mask)

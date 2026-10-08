@@ -15,6 +15,7 @@ def evaluate(module, dataset, cfg: Stage1Config, fitter, device, autocast) -> di
     generator = torch.Generator().manual_seed(cfg.seed)
     totals: dict[str, torch.Tensor] = {}
     flow_sum, valid_sum, batches = 0.0, 0.0, 0
+    text_flow = {"null": 0.0, "shuffled": 0.0}
     for index, (context, target) in enumerate(loader):
         if index >= cfg.eval_batches:
             break
@@ -28,6 +29,12 @@ def evaluate(module, dataset, cfg: Stage1Config, fitter, device, autocast) -> di
             controls = module.sample_controls(inputs, cfg.world.trace_eval_solver_steps, generator)
             blind = module.sample_controls(module.encode(context.without_history()), cfg.world.trace_eval_solver_steps,
                                            generator)
+            swapped = {"null": [None] * batch, "shuffled": shifted(context.instructions)}
+            for key, instructions in swapped.items():
+                other = module(module.encode(context.with_instructions(instructions)),
+                               noisy_controls(target.controls, noise, s), s)
+                text_flow[key] += masked_flow_loss(other.velocity, noise - target.controls,
+                                                   context.anchor_mask & target.fit_valid).item()
         flow_sum += masked_flow_loss(outputs.velocity, noise - target.controls,
                                      context.anchor_mask & target.fit_valid).item()
         valid_sum += validity_loss(outputs.validity_logits, target.trace_valid, context.anchor_mask).item()
@@ -43,4 +50,10 @@ def evaluate(module, dataset, cfg: Stage1Config, fitter, device, autocast) -> di
     if not batches:
         return {}
     blind = float(totals["blind_ade_sum"] / totals["ade_count"].clamp_min(1))
-    return {"flow": flow_sum / batches, "validity": valid_sum / batches, **summarize(totals), "ade_no_history": blind}
+    return {"flow": flow_sum / batches, "validity": valid_sum / batches, **summarize(totals), "ade_no_history": blind,
+            "flow_null_text": text_flow["null"] / batches, "flow_shuffled_text": text_flow["shuffled"] / batches}
+
+
+def shifted(instructions: list[str | None]) -> list[str | None]:
+    half = len(instructions) // 2
+    return instructions[half:] + instructions[:half]

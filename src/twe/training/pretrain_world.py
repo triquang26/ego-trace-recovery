@@ -14,6 +14,7 @@ from twe.models.world_module import WorldModule, build_world_module
 from twe.preprocess.bspline_targets import BSplineTargets
 from twe.preprocess.normalizer import load_normalizer
 from twe.training.checkpoint import save_world, world_artifact
+from twe.training.ema import ExponentialAverage, averaged
 from twe.training.evaluate import evaluate
 from twe.training.objective import (masked_flow_loss, motion_loss, noisy_controls, sample_flow_time, validity_loss,
                                     warmup_cosine)
@@ -31,8 +32,10 @@ def query_sampling(cfg: Stage1Config, randomize: bool) -> QuerySampling:
 
 def parameter_groups(module: WorldModule, weight_decay: float) -> list[dict]:
     decay, no_decay = [], []
-    for name, param in module.expert.named_parameters():
-        (decay if param.ndim >= 2 else no_decay).append(param)
+    for part in module.trainable().values():
+        for param in part.parameters():
+            if param.requires_grad:
+                (decay if param.ndim >= 2 else no_decay).append(param)
     return [{"params": decay, "weight_decay": weight_decay}, {"params": no_decay, "weight_decay": 0.0}]
 
 
@@ -42,6 +45,7 @@ def parameter_report(module: WorldModule) -> dict:
         "visual_encoder": count(module.visual_encoder, False),
         "grounding_encoder": count(module.grounding_encoder, False),
         "trace_expert": count(module.expert, False),
+        "fusion": count(module.fusion, False) if module.fusion is not None else 0,
         "total": count(module, False),
         "trainable": count(module, True),
     }
@@ -78,12 +82,15 @@ def train(cfg: Stage1Config, data_root: Path, out_dir: Path, module: WorldModule
                                   betas=cfg.betas)
     total = cfg.optimizer_updates
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda u: warmup_cosine(u, total, cfg.warmup_fraction))
+    ema = ExponentialAverage(module.trainable_parameters(), cfg.ema_decay) if cfg.ema_decay else None
     state_path = out_dir / "train_state.pt"
     start = 0
     best = float("inf")
     if state_path.exists():
         state = torch.load(state_path, map_location="cpu", weights_only=False)
-        module.expert.load_state_dict(state["expert"])
+        module.load_trainable_state(state["trainable"])
+        if ema is not None:
+            ema.load_state_dict(state["ema"])
         optimizer.load_state_dict(state["optimizer"])
         scheduler.load_state_dict(state["scheduler"])
         start = state["update"]
@@ -111,8 +118,10 @@ def train(cfg: Stage1Config, data_root: Path, out_dir: Path, module: WorldModule
             (losses["loss"] / accum).backward()
             for key in sums:
                 sums[key] += losses[key].item() / accum
-        grad_norm = torch.nn.utils.clip_grad_norm_(module.expert.parameters(), cfg.gradient_clip_norm)
+        grad_norm = torch.nn.utils.clip_grad_norm_(module.trainable_parameters(), cfg.gradient_clip_norm)
         optimizer.step()
+        if ema is not None:
+            ema.update()
         scheduler.step()
         optimizer.zero_grad(set_to_none=True)
         done = update + 1
@@ -123,19 +132,22 @@ def train(cfg: Stage1Config, data_root: Path, out_dir: Path, module: WorldModule
             log.flush()
             print(json.dumps(record), flush=True)
         if done % cfg.eval_every == 0 or done == total:
-            metrics = evaluate(module, val_set, cfg, fitter, device, autocast)
-            log.write(json.dumps({"update": done, "eval": metrics}) + "\n")
-            print(json.dumps({"update": done, "eval": metrics}), flush=True)
+            with averaged(ema):
+                metrics = evaluate(module, val_set, cfg, fitter, device, autocast)
+                log.write(json.dumps({"update": done, "eval": metrics}) + "\n")
+                print(json.dumps({"update": done, "eval": metrics}), flush=True)
+                if metrics.get("flow", best) < best:
+                    best = metrics["flow"]
+                    artifact = world_artifact(module, fitter, normalizer, train_set.manifest.teacher_revision)
+                    save_world(out_dir / "world_best.pt", {**artifact, "update": done, "eval": metrics})
             module.train()
-            if metrics.get("flow", best) < best:
-                best = metrics["flow"]
-                artifact = world_artifact(module, fitter, normalizer, train_set.manifest.teacher_revision)
-                save_world(out_dir / "world_best.pt", {**artifact, "update": done, "eval": metrics})
         if done % cfg.checkpoint_every == 0 or done == total:
-            artifact = world_artifact(module, fitter, normalizer, train_set.manifest.teacher_revision)
-            module.model_revision = save_world(out_dir / "world_latest.pt", artifact)
-            torch.save({"expert": module.expert.state_dict(), "optimizer": optimizer.state_dict(),
-                        "scheduler": scheduler.state_dict(), "update": done, "best_flow": best}, state_path)
+            with averaged(ema):
+                artifact = world_artifact(module, fitter, normalizer, train_set.manifest.teacher_revision)
+                module.model_revision = save_world(out_dir / "world_latest.pt", artifact)
+            torch.save({"trainable": module.trainable_state(), "ema": ema.state_dict() if ema else None,
+                        "optimizer": optimizer.state_dict(), "scheduler": scheduler.state_dict(), "update": done,
+                        "best_flow": best}, state_path)
             if on_checkpoint:
                 on_checkpoint(out_dir)
     log.close()

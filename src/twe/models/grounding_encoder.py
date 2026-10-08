@@ -5,6 +5,7 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
 
+from twe.models.fusion import FusionLayer, PromptFeatures, fusion_layers_from
 from twe.models.visual_encoder import IMAGENET_MEAN, IMAGENET_STD
 
 
@@ -14,6 +15,7 @@ class GroundingOutput:
     text_mask: Tensor
     null: Tensor
     maps: list[Tensor]
+    prompt: PromptFeatures | None = None
 
 
 def level_shapes(height: int, width: int, levels: int, stride: int = 8) -> list[tuple[int, int]]:
@@ -66,7 +68,22 @@ class GroundingDinoEncoder(nn.Module):
         shapes = level_shapes(rgb.shape[-2], rgb.shape[-1], self.levels)
         maps = split_levels(out.encoder_last_hidden_state_vision.float(), shapes)
         null = torch.tensor([not t for t in instructions], device=rgb.device)
-        return GroundingOutput(out.encoder_last_hidden_state_text.float(), tokens["attention_mask"].bool(), null, maps)
+        return GroundingOutput(out.encoder_last_hidden_state_text.float(), tokens["attention_mask"].bool(), null, maps,
+                               self.prompt_features(tokens))
+
+    def prompt_features(self, tokens: dict) -> PromptFeatures:
+        from transformers.models.grounding_dino.modeling_grounding_dino import (
+            encode_sinusoidal_position_embedding, generate_masks_with_special_tokens_and_transfer_map)
+
+        ids = tokens["input_ids"]
+        self_mask, positions = generate_masks_with_special_tokens_and_transfer_map(ids)
+        hidden = self.model.text_backbone(ids, self_mask[:, None], tokens.get("token_type_ids"), positions)
+        features = self.model.text_projection(hidden.last_hidden_state).float()
+        embedding = encode_sinusoidal_position_embedding(positions[..., None].float(), num_pos_feats=features.shape[-1])
+        return PromptFeatures(features, tokens["attention_mask"].bool(), self_mask, embedding.float())
+
+    def fusion_layers(self, count: int) -> list[FusionLayer]:
+        return fusion_layers_from(self.model.encoder.layers, count)
 
 
 def map_validity(image_valid: Tensor, shape: tuple[int, int]) -> Tensor:

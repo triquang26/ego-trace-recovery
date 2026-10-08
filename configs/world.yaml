@@ -5,9 +5,10 @@ text_encoder_revision: main
 image_size: 336
 patch_grid: 24
 visual_dim: 768
-pooled_grid: 8
+pooled_grid: 12
 text_dim: 256
 grounding_context_level: 2
+fusion_layers: 4
 text_max_length: 64
 num_anchors: 64
 query_pool: 128

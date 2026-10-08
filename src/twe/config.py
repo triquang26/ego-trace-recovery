@@ -16,6 +16,7 @@ class WorldConfig:
     pooled_grid: int = 8
     text_dim: int = 256
     grounding_context_level: int = 2
+    fusion_layers: int = 0
     text_max_length: int = 64
     num_anchors: int = 64
     query_pool: int = 128
@@ -60,6 +61,7 @@ class Stage1Config:
     weight_decay: float = 0.01
     betas: tuple[float, float] = (0.9, 0.95)
     gradient_clip_norm: float = 1.0
+    ema_decay: float = 0.0
     precision: str = "bfloat16"
     effective_batch_size: int = 128
     micro_batch_size: int = 64

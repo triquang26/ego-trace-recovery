@@ -1,6 +1,6 @@
 # Trace World Expert
 
-Stage 1 của thiết kế ego-robot world model: pretrain trace world expert: DINOv2-Base 336px và Grounding DINO tiny (feature ảnh–text đã trộn, frozen) làm encoder, trace transformer 8×512 có history token, head chuyển động cho grounding ngầm bằng flow matching trên B-spline control points của future 3D point tracks.
+Stage 1 của thiết kế ego-robot world model: pretrain trace world expert: DINOv2-Base hoặc DINOv3 ViT-B/16 336px và Grounding DINO tiny (frozen) làm encoder, 4 lớp fusion ảnh–text hai chiều khởi tạo từ Grounding DINO (train), trace transformer 8×512 có history token, head chuyển động cho grounding ngầm bằng flow matching trên B-spline control points của future 3D point tracks.
 
 ## Cấu trúc
 
@@ -74,6 +74,10 @@ Theo μ₀ (TraceExtract, Appendix A và `trace_dataset.py` của repo `Yoonkyo/
 ## Grounding ngầm
 
 Grounding DINO chỉ dùng làm encoder: token text và feature ảnh đa tỉ lệ sau feature enhancer. Không dùng box. Mỗi điểm nhận feature Grounding DINO tại uv (mức stride 8) và điểm căn chỉnh `max_j ⟨điểm, token_j⟩`; context của trace expert gồm token DINOv2 pooled, token Grounding DINO mức `grounding_context_level` và token text. Train bốc cả điểm chuyển động lẫn đứng yên (`moving_fraction`); head `motion` (BCE, forward riêng tại s = 1) học điểm nào sẽ chuyển động theo câu lệnh, `text_dropout` bỏ câu lệnh ngẫu nhiên.
+
+## Fusion ảnh–text
+
+Như TurboVLA: token DINO (24×24 với DINOv2, 21×21 với DINOv3) qua `VisionProjection` về 256 chiều cộng sincos 2D; text là output BERT + `text_projection` của Grounding DINO (trước enhancer, mask sub-sentence gốc). `fusion_layers` lớp đầu, mỗi lớp gồm bi-attention (`fusion_layer`) và text self-attention (`text_enhancer_layer`), được sao chép nguyên trọng số từ encoder Grounding DINO rồi train; bỏ deformable attention của ảnh. Ảnh đã trộn được pool về `pooled_grid` làm context, lấy mẫu tại uv cộng vào token mỗi điểm; text đã trộn thay text context. `fusion_layers: 0` trả về kiến trúc cũ. `ema_decay` giữ trung bình trượt của tham số train, dùng cho eval và checkpoint. Eval báo thêm `flow_null_text`, `flow_shuffled_text`: flow loss khi bỏ câu lệnh hoặc đổi câu lệnh giữa các window; cao hơn `flow` nghĩa là model dùng câu lệnh.
 
 ## Dataset contract
 

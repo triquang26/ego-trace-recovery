@@ -9,20 +9,49 @@ from twe.preprocess.current_anchors import patch_validity, pool_visual, sample_a
 
 
 class WorldModule(nn.Module):
-    def __init__(self, cfg: WorldConfig, visual_encoder: nn.Module, grounding_encoder: nn.Module):
+    def __init__(self, cfg: WorldConfig, visual_encoder: nn.Module, grounding_encoder: nn.Module,
+                 fusion: nn.Module | None = None):
         super().__init__()
+        if bool(cfg.fusion_layers) != (fusion is not None):
+            raise ValueError("fusion module must be given exactly when fusion_layers > 0")
         self.cfg = cfg
         self.visual_encoder = visual_encoder.requires_grad_(False)
         self.grounding_encoder = grounding_encoder.requires_grad_(False)
+        self.fusion = fusion
         self.expert = TraceExpert(cfg)
         self.model_revision = "untrained"
+
+    def trainable(self) -> dict[str, nn.Module]:
+        parts = {"expert": self.expert}
+        if self.fusion is not None:
+            parts["fusion"] = self.fusion
+        return parts
+
+    def trainable_parameters(self) -> list[nn.Parameter]:
+        return [p for part in self.trainable().values() for p in part.parameters() if p.requires_grad]
+
+    def trainable_state(self) -> dict[str, dict]:
+        return {name: part.state_dict() for name, part in self.trainable().items()}
+
+    def load_trainable_state(self, state: dict[str, dict]) -> None:
+        if set(state) != set(self.trainable()):
+            raise ValueError(f"trainable parts {sorted(state)} != {sorted(self.trainable())}")
+        for name, part in self.trainable().items():
+            part.load_state_dict(state[name])
 
     def encode(self, context: WorldContext) -> ExpertInputs:
         with torch.no_grad():
             patches = self.visual_encoder(context.rgb).float()
             grounding = self.grounding_encoder(context.rgb, context.image_valid, context.instructions)
         weight = patch_validity(context.image_valid, self.cfg.patch_grid)
-        visual, visual_mask = pool_visual(patches, weight, self.cfg.pooled_grid)
+        text, text_mask, fused_local = grounding.text, grounding.text_mask, None
+        if self.fusion is None:
+            visual, visual_mask = pool_visual(patches, weight, self.cfg.pooled_grid)
+        else:
+            fused = self.fusion(patches, weight, grounding.prompt)
+            visual, visual_mask = pool_visual(fused.visual, weight, self.cfg.pooled_grid)
+            text, text_mask = fused.text, grounding.prompt.mask
+            fused_local = sample_anchor_features(fused.visual, context.anchor_uv)
         anchors = sample_anchor_features(patches, context.anchor_uv)
         fine = grounding.maps[0].permute(0, 2, 3, 1)
         grounded_local = sample_anchor_features(fine, context.anchor_uv)
@@ -31,9 +60,9 @@ class WorldModule(nn.Module):
         grounded = coarse.flatten(2).transpose(1, 2)
         grounded_mask = map_validity(context.image_valid, tuple(coarse.shape[-2:])).flatten(1)
         history, history_valid = self.history_inputs(context)
-        return ExpertInputs(visual, visual_mask, grounding.text, grounding.text_mask, grounding.null,
+        return ExpertInputs(visual, visual_mask, text, text_mask, grounding.null,
                             anchors, context.anchor_uv, context.anchor_mask, history, history_valid,
-                            grounded, grounded_mask, grounded_local, alignment)
+                            grounded, grounded_mask, grounded_local, alignment, fused_local)
 
     def history_inputs(self, context: WorldContext) -> tuple[Tensor, Tensor]:
         if context.history is not None:
@@ -82,9 +111,14 @@ class WorldModule(nn.Module):
 
 
 def build_world_module(cfg: WorldConfig) -> WorldModule:
+    from twe.models.fusion import VisionLanguageFusion
     from twe.models.grounding_encoder import GroundingDinoEncoder
     from twe.models.visual_encoder import DinoVisualEncoder
 
     visual = DinoVisualEncoder(cfg.visual_encoder, cfg.visual_encoder_revision, cfg.patch_grid)
     grounding = GroundingDinoEncoder(cfg.text_encoder, cfg.text_encoder_revision, cfg.text_max_length)
-    return WorldModule(cfg, visual, grounding)
+    fusion = None
+    if cfg.fusion_layers:
+        fusion = VisionLanguageFusion(grounding.fusion_layers(cfg.fusion_layers), cfg.visual_dim, cfg.text_dim,
+                                      cfg.patch_grid, cfg.dropout)
+    return WorldModule(cfg, visual, grounding, fusion)

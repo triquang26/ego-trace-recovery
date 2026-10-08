@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from twe.config import Stage1Config, WorldConfig
+from twe.models.fusion import PromptFeatures, VisionLanguageFusion, fusion_layers_from
 from twe.models.grounding_encoder import GroundingOutput
 from twe.models.world_module import WorldModule
 
@@ -49,11 +50,30 @@ class StubGrounding(nn.Module):
         for _ in range(3):
             maps.append(F.avg_pool2d(maps[-1], 2, ceil_mode=True))
         null = torch.tensor([not t for t in instructions], device=device)
-        return GroundingOutput(text, mask, null, maps)
+        self_mask = (mask[:, :, None] & mask[:, None, :]) | torch.eye(width, dtype=torch.bool, device=device)
+        positions = torch.zeros_like(text)
+        return GroundingOutput(text, mask, null, maps, PromptFeatures(text, mask, self_mask, positions))
+
+
+def grounding_layers(count: int):
+    from transformers import GroundingDinoConfig
+    from transformers.models.grounding_dino.modeling_grounding_dino import GroundingDinoEncoderLayer
+
+    torch.manual_seed(2)
+    config = GroundingDinoConfig(encoder_ffn_dim=256, fusion_dropout=0.0, fusion_droppath=0.0)
+    layers = [GroundingDinoEncoderLayer(config).eval() for _ in range(count)]
+    for layer in layers:
+        layer.fusion_layer.vision_param.data.fill_(0.5)
+        layer.fusion_layer.text_param.data.fill_(0.5)
+    return layers
 
 
 def tiny_module(cfg: WorldConfig = TINY_WORLD) -> WorldModule:
-    return WorldModule(cfg, StubVisual(), StubGrounding())
+    fusion = None
+    if cfg.fusion_layers:
+        layers = fusion_layers_from(grounding_layers(cfg.fusion_layers), cfg.fusion_layers)
+        fusion = VisionLanguageFusion(layers, cfg.visual_dim, cfg.text_dim, cfg.patch_grid, cfg.dropout)
+    return WorldModule(cfg, StubVisual(), StubGrounding(), fusion)
 
 
 def tiny_stage1(**overrides) -> Stage1Config:
