@@ -122,6 +122,34 @@ def evaluate_run(data: str, run: str, batches: int = 40, config: str = "configs/
     return {"update": artifact.get("update"), **metrics}
 
 
+@app.function(gpu=GPU, volumes={VOLUME_PATH: volume}, secrets=[hf_secret], timeout=4 * 3600, cpu=8, memory=65536)
+def benchmark(data: str, run: str, config: str = "configs/stage1.yaml") -> dict:
+    import json
+
+    from twe.config import load_stage1_config
+    from twe.evaluation.benchmark import BenchmarkRunner, benchmark_groups
+    from twe.models.world_module import build_world_module
+    from twe.training.checkpoint import artifact_world_config, load_world
+    from twe.training.pretrain_world import make_fitter
+
+    volume.reload()
+    cfg = load_stage1_config(Path("/root") / config)
+    out = VOLUME_PATH / "runs" / run
+    weights = out / "world_best.pt"
+    world = artifact_world_config(weights)
+    module = build_world_module(world)
+    artifact = load_world(weights, module)
+    sigma = artifact["normalizer"][f"sigma_{world.target_space}"]
+    fitter = make_fitter(cfg)
+    groups = benchmark_groups(VOLUME_PATH / "data" / data, VOLUME_PATH / "ext" / "mu0" / "test_set", world, fitter,
+                              sigma, frozenset(cfg.heldout_tasks))
+    report = {"update": artifact.get("update"), "groups": BenchmarkRunner(module.to("cuda"), fitter, sigma, "cuda").run(groups)}
+    (out / "benchmark.json").write_text(json.dumps(report, indent=2))
+    volume.commit()
+    sync_to_bucket(out, f"runs/{run}")
+    return report
+
+
 @app.local_entrypoint()
 def main(action: str = "smoke", data: str = "synthetic", run: str = "smoke", overrides: str = "", steps: int = 4,
          split: str = "validation") -> None:
@@ -137,6 +165,9 @@ def main(action: str = "smoke", data: str = "synthetic", run: str = "smoke", ove
         print(compute_normalizer.remote(data))
     elif action == "demo":
         print(demo.remote(data, run, steps=steps, split=split))
+    elif action == "benchmark":
+        for name in run.split(","):
+            print(name, json.dumps(benchmark.remote(data, name), indent=1))
     elif action == "evaluate":
         print(json.dumps(evaluate_run.remote(data, run)))
     elif action == "train":

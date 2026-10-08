@@ -1,5 +1,7 @@
 import bisect
-from dataclasses import dataclass
+import hashlib
+import math
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -25,19 +27,38 @@ class QuerySampling:
     caption_probability: float = 0.8
 
 
+@dataclass(frozen=True)
+class TaskSelection:
+    exclude: frozenset = field(default_factory=frozenset)
+    only: frozenset | None = None
+    shard_fraction: float = 1.0
+
+    def allows(self, task: str | None) -> bool:
+        return task not in self.exclude and (self.only is None or task in self.only)
+
+    def shards(self, entries: list) -> list:
+        if self.shard_fraction >= 1.0:
+            return entries
+        rank = lambda e: hashlib.sha1(e.path.encode()).hexdigest()
+        keep = {e.path for e in sorted(entries, key=rank)[: math.ceil(len(entries) * self.shard_fraction)]}
+        return [e for e in entries if e.path in keep]
+
+
 def moving_rows(reader: ShardReader) -> np.ndarray:
     return np.asarray(reader.arrays["trace_moving"]) & np.asarray(reader.arrays["anchor_mask"])
 
 
 class WorldWindowDataset(Dataset):
     def __init__(self, root: Path, split: str, sigma, fitter: BSplineTargets, sampling: QuerySampling,
-                 space: str = "screen"):
+                 space: str = "screen", tasks: TaskSelection = TaskSelection()):
         self.root = Path(root)
         self.space = space
         self.manifest = Manifest.read(self.root)
-        self.readers = [ShardReader(self.root, entry) for entry in self.manifest.select(split)]
+        self.readers = [ShardReader(self.root, entry) for entry in tasks.shards(self.manifest.select(split))]
         self.sampling = sampling
-        self.usable = [np.flatnonzero(moving_rows(r).sum(-1) >= sampling.min_points) for r in self.readers]
+        self.usable = [np.flatnonzero((moving_rows(r).sum(-1) >= sampling.min_points)
+                                      & np.array([tasks.allows(m.get("task")) for m in r.metas], dtype=bool))
+                       for r in self.readers]
         self.offsets = np.cumsum([0] + [len(u) for u in self.usable]).tolist()
         self.sigma = torch.as_tensor(sigma, dtype=torch.float32)
         self.fitter = fitter

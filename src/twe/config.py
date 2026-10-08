@@ -76,6 +76,8 @@ class Stage1Config:
     fit_max_condition: float = 1e5
     reliability_threshold: float = 0.5
     min_moving_points: int = 4
+    heldout_tasks: tuple[str, ...] = ()
+    train_shard_fraction: float = 1.0
     mixture: dict[str, float] = field(default_factory=dict)
     num_workers: int = 8
     log_every: int = 50
@@ -117,4 +119,5 @@ def load_stage1_config(path: str | Path, overrides: dict | None = None) -> Stage
     world.update(world_overrides)
     values["world"] = _build(WorldConfig, world)
     values["betas"] = tuple(values.get("betas", (0.9, 0.95)))
+    values["heldout_tasks"] = tuple(values.get("heldout_tasks", ()))
     return _build(Stage1Config, values)

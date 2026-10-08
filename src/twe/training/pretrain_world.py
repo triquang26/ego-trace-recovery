@@ -8,7 +8,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from twe.config import Stage1Config, load_stage1_config
-from twe.data.dataset import QuerySampling, WorldWindowDataset, collate
+from twe.data.dataset import QuerySampling, TaskSelection, WorldWindowDataset, collate
 from twe.data.sampler import MixtureBatchSampler
 from twe.models.world_module import WorldModule, build_world_module
 from twe.preprocess.bspline_targets import BSplineTargets
@@ -28,6 +28,11 @@ def make_fitter(cfg: Stage1Config) -> BSplineTargets:
 
 def query_sampling(cfg: Stage1Config, randomize: bool) -> QuerySampling:
     return QuerySampling(cfg.world.num_anchors, cfg.min_moving_points, randomize)
+
+
+def task_selection(cfg: Stage1Config, split: str) -> TaskSelection:
+    fraction = cfg.train_shard_fraction if split == "train" else 1.0
+    return TaskSelection(frozenset(cfg.heldout_tasks), None, fraction)
 
 
 def parameter_groups(module: WorldModule, weight_decay: float) -> list[dict]:
@@ -74,8 +79,10 @@ def train(cfg: Stage1Config, data_root: Path, out_dir: Path, module: WorldModule
     fitter = make_fitter(cfg)
     space = cfg.world.target_space
     sigma = normalizer[f"sigma_{space}"]
-    train_set = WorldWindowDataset(data_root, "train", sigma, fitter, query_sampling(cfg, True), space)
-    val_set = WorldWindowDataset(data_root, "validation", sigma, fitter, query_sampling(cfg, False), space)
+    train_set = WorldWindowDataset(data_root, "train", sigma, fitter, query_sampling(cfg, True), space,
+                                   task_selection(cfg, "train"))
+    val_set = WorldWindowDataset(data_root, "validation", sigma, fitter, query_sampling(cfg, False), space,
+                                 task_selection(cfg, "validation"))
     module = (module or build_world_module(cfg.world)).to(device)
     (out_dir / "parameters.json").write_text(json.dumps(parameter_report(module), indent=2))
     optimizer = torch.optim.AdamW(parameter_groups(module, cfg.weight_decay), lr=cfg.learning_rate,
