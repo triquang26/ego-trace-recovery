@@ -124,7 +124,7 @@ def teacher_videos(dataset: str, count: int = 8, frame_step: int = 2) -> list[di
         stop = int(np.searchsorted(recording.timestamps, meta["current_timestamp_seconds"] + 2.0, side="right"))
         frames = recording.read_frames(np.arange(start, stop))
         times = recording.timestamps[start:stop] - recording.timestamps[start]
-        records.append(render_window(reader, row, frames, times, 224, out / f"teacher_{n}.gif"))
+        records.append(render_window(reader, row, frames, times, out / f"teacher_{n}.gif"))
     write_index(out, records)
     volume.commit()
     return records

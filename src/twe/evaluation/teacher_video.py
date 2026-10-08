@@ -30,16 +30,17 @@ def most_dynamic(root: Path, count: int) -> list[tuple[ShardReader, int]]:
     return chosen
 
 
-def render_window(reader: ShardReader, row: int, frames: np.ndarray, times: np.ndarray, size: int, path: Path,
-                  upscale: int = 2) -> dict:
+def render_window(reader: ShardReader, row: int, frames: np.ndarray, times: np.ndarray, path: Path,
+                  side: int = 448) -> dict:
     arrays = {key: np.asarray(value[row]) for key, value in reader.arrays.items()}
     meta = reader.metas[row]
     rows = np.flatnonzero(arrays["trace_moving"] & arrays["anchor_mask"])
+    size = arrays["rgb"].shape[0]
+    upscale = side / size
     pixels = project(arrays["anchor_xyz"], arrays["trace"], arrays["intrinsics"]) * upscale
     points, keep = absolute_points(arrays["anchor_xyz"], arrays["trace"], arrays["trace_valid"])
     extent = shared_extent([(points, keep)], rows)
     offsets = np.concatenate([[0.0], meta["future_offsets_seconds"]])
-    side = size * upscale
     base = grayscale(Image.fromarray(arrays["rgb"]).resize((side, side)))
     past = project(arrays["anchor_xyz"], arrays["history"], arrays["intrinsics"])[:, 1:] * upscale
     past_valid = arrays["history_valid"]
