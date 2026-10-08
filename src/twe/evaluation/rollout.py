@@ -76,16 +76,23 @@ class TraceRollout:
 
     def resample(self, track: np.ndarray, times: np.ndarray) -> np.ndarray:
         grid = np.arange(track.shape[1]) * self.step_seconds
-        return np.stack([np.stack([np.interp(times, grid, track[n, :, d]) for d in range(3)], -1) for n in range(len(track))])
+        channel = lambda n, d: np.interp(times, grid, track[n, :, d])
+        return np.stack([np.stack([channel(n, d) for d in range(3)], -1) for n in range(len(track))])
 
     def run(self, geometry: EpisodeGeometry, start: int, current_pixels: np.ndarray, past_pixels: np.ndarray | None,
-            instruction, horizon: float, stride: float, closed_loop: bool, seed: int = 0) -> np.ndarray:
+            instruction, horizon: float, stride: float, closed_loop: bool, seed: int = 0,
+            observed: np.ndarray | None = None) -> np.ndarray:
         world = geometry.to_world(start, current_pixels)
         past_world = None if past_pixels is None else geometry.to_world(start, past_pixels)
         track = [world]
         frames_per_stride = int(round(stride * geometry.fps))
         for k in range(int(round(horizon / stride))):
             frame = min(start + k * frames_per_stride, len(geometry.images) - 1) if closed_loop else start
+            if observed is not None and k > 0:
+                index = k * frames_per_stride
+                world = observed[:, index]
+                lags = np.round(np.arange(self.cfg.history_steps, 0, -1) * self.step_seconds * geometry.fps).astype(int)
+                past_world = observed[:, np.clip(index - lags, 0, None)]
             current = geometry.to_pixels(frame, world)
             past = None if past_world is None else geometry.to_pixels(frame, past_world)
             future = self.predict(np.asarray(geometry.images[frame]), current, past, instruction, seed + k)

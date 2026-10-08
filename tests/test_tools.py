@@ -77,6 +77,6 @@ def test_rollout_chains_segments_and_renders(tmp_path):
     engine = TraceRollout(tiny_module(), make_fitter(tiny_stage1()), [0.05, 0.05, 0.1], TINY_WORLD, "cpu", steps=2)
     report = rollout_benchmark(engine, [path], tmp_path / "rollout", horizon=2.0, stride=1.0, max_points=6)
     row = report["episodes"][0]
-    assert set(row["errors"]) == {"closed_loop", "closed_loop_no_history", "open_loop"} and row["history_available"]
+    assert set(row["errors"]) == {"replan_observed", "closed_loop", "closed_loop_no_history", "open_loop"} and row["history_available"]
     assert row["errors"]["closed_loop"]["0-2s"]["zero"] > 0 and report["segment_ms_median"] > 0
-    assert (tmp_path / "rollout" / "ep0.gif").exists() and (tmp_path / "rollout" / "ep0.png").exists()
+    assert (tmp_path / "rollout" / "ep0_closed_loop.gif").exists() and (tmp_path / "rollout" / "ep0.png").exists()

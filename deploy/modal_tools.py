@@ -11,6 +11,7 @@ VOLUME_PATH = Path("/vol")
 MU0_REPO = "furonghuang-lab/mu0"
 MU0_ROOT = VOLUME_PATH / "ext" / "mu0"
 app = modal.App("trace-world-expert-tools")
+ROLLOUT_GROUPS = ",".join(f"test_dataset_{g}" for g in ("egodex", "custom_dataset_human", "custom_dataset_robot", "ur3"))
 
 
 @app.function(image=modal_export.upload_image, volumes={VOLUME_PATH: modal_app.volume}, secrets=[modal_app.hf_secret],
@@ -72,8 +73,8 @@ def prompts(data: str, run: str, scenes: int = 3, config: str = "configs/stage1.
 @app.function(image=modal_app.image.add_local_python_source("modal_app", "modal_export"), gpu=modal_app.GPU,
               volumes={VOLUME_PATH: modal_app.volume}, secrets=[modal_app.hf_secret], timeout=2 * 3600, cpu=8,
               memory=32768)
-def rollout(run: str, groups: str = "test_dataset_egodex,test_dataset_custom_dataset_human", per_group: int = 8,
-            horizon: float = 8.0, stride: float = 1.0, config: str = "configs/stage1.yaml") -> dict:
+def rollout(run: str, groups: str = ROLLOUT_GROUPS, per_group: int = 20, horizon: float = 6.0, stride: float = 1.0,
+            config: str = "configs/stage1.yaml") -> dict:
     from twe.config import load_stage1_config
     from twe.evaluation.rollout import TraceRollout
     from twe.evaluation.rollout_eval import rollout_benchmark
@@ -89,9 +90,10 @@ def rollout(run: str, groups: str = "test_dataset_egodex,test_dataset_custom_dat
                           "cuda")
     episodes = [p for g in groups.split(",") for p in sorted((MU0_ROOT / "test_set" / g).iterdir())[:per_group]
                 if (p / "samples").exists()]
-    report = rollout_benchmark(engine, episodes, out / "rollout", horizon=horizon, stride=stride)
+    name = f"rollout_{horizon:g}s"
+    report = rollout_benchmark(engine, episodes, out / name, horizon=horizon, stride=stride)
     modal_app.volume.commit()
-    modal_app.sync_to_bucket(out / "rollout", f"runs/{run}/rollout")
+    modal_app.sync_to_bucket(out / name, f"runs/{run}/{name}")
     return report
 
 
@@ -105,7 +107,8 @@ def main(action: str, data: str = "egodex_v4", run: str = "", group: str = "test
     elif action == "rollout":
         import json
 
-        print(json.dumps(rollout.remote(run), indent=1))
+        for horizon in (4.0, 6.0):
+            print(json.dumps(rollout.remote(run, horizon=horizon), indent=1))
     elif action == "prompts":
         print(prompts.remote(data, run))
     else:

@@ -8,7 +8,7 @@ from twe.data.traceextract import DEFAULT_FPS, TraceExtractEpisode, resample
 from twe.evaluation.rollout import EpisodeGeometry, TraceRollout
 from twe.evaluation.trace_style import age_color, grayscale, hstack, titled
 
-BUCKETS = ((0.0, 2.0), (2.0, 4.0), (4.0, 8.0))
+BUCKETS = ((0.0, 2.0), (2.0, 4.0), (4.0, 6.0), (6.0, 8.0))
 
 
 def long_slot(episode: TraceExtractEpisode, frames: int, history: int, max_points: int):
@@ -43,7 +43,8 @@ def draw_tracks(image: np.ndarray, tracks: np.ndarray, title: str, scale: int = 
     steps = tracks.shape[1]
     for track in tracks:
         for k in range(1, steps):
-            draw.line([tuple(track[k - 1, :2] * scale), tuple(track[k, :2] * scale)], fill=age_color(k / (steps - 1)), width=2)
+            color = age_color(k / (steps - 1))
+            draw.line([tuple(track[k - 1, :2] * scale), tuple(track[k, :2] * scale)], fill=color, width=2)
         x, y = track[0, :2] * scale
         draw.ellipse([x - 3, y - 3, x + 3, y + 3], fill=(148, 0, 211))
     return titled(canvas, title)
@@ -63,12 +64,13 @@ def segment_gif(geometry: EpisodeGeometry, start: int, truth_world: np.ndarray, 
                 for j in range(1, track.shape[0]):
                     fill = color or age_color(j / max(track.shape[0] - 1, 1))
                     draw.line([tuple(track[j - 1, :2]), tuple(track[j, :2])], fill=fill, width=2 if color else 3)
-        draw.text((8, 8), f"t = {k / geometry.fps:.1f} s   white: teacher   color: model (next 2 s)", fill=(255, 255, 0))
+        label = f"t = {k / geometry.fps:.1f} s   white: teacher   color: model (next 2 s)"
+        draw.text((8, 8), label, fill=(255, 255, 0))
         frames.append(image)
     frames[0].save(path, save_all=True, append_images=frames[1:], duration=700, loop=0)
 
 
-def rollout_episode(rollout: TraceRollout, path: Path, out: Path, horizon: float = 8.0, stride: float = 1.0,
+def rollout_episode(rollout: TraceRollout, path: Path, out: Path, horizon: float = 6.0, stride: float = 1.0,
                     max_points: int = 24, fps: float = DEFAULT_FPS) -> dict:
     episode = TraceExtractEpisode(path, fps)
     cameras = np.load(path / "cameras.npz")
@@ -86,9 +88,11 @@ def rollout_episode(rollout: TraceRollout, path: Path, out: Path, horizon: float
                              times, fps)
     past = past if past_ok.all() else None
     current = truth[:, 0]
-    runs = {"closed_loop": (past, True), "closed_loop_no_history": (None, True), "open_loop": (past, False)}
+    runs = {"replan_observed": (past, True), "closed_loop": (past, True), "closed_loop_no_history": (None, True),
+            "open_loop": (past, False)}
     width = episode.images.shape[2]
     truth_world = geometry.to_world(start, truth)
+    observed = {"replan_observed": truth_world}
     record = {"episode": path.name, "start_frame": start, "start_seconds": start / fps,
               "episode_seconds": len(episode.images) / fps, "points": int(len(rows)),
               "instruction": episode.instruction, "history_available": past is not None, "errors": {},
@@ -96,12 +100,13 @@ def rollout_episode(rollout: TraceRollout, path: Path, out: Path, horizon: float
               "image_hw": list(episode.images.shape[1:3])}
     panels = [draw_tracks(np.asarray(episode.images[start]), truth, f"teacher {horizon:g} s")]
     for name, (history, closed) in runs.items():
-        world = rollout.run(geometry, start, current, history, episode.instruction, horizon, stride, closed)
+        world = rollout.run(geometry, start, current, history, episode.instruction, horizon, stride, closed,
+                            observed=observed.get(name))
         pixels = geometry.to_pixels(start, world)
         record["errors"][name] = bucket_errors(pixels, truth, fps, width)
         panels.append(draw_tracks(np.asarray(episode.images[start]), pixels, name.replace("_", " ")))
-        if name == "closed_loop":
-            segment_gif(geometry, start, truth_world, world, int(round(stride * fps)), out / f"{path.name}.gif")
+        if name in ("closed_loop", "replan_observed"):
+            segment_gif(geometry, start, truth_world, world, int(round(stride * fps)), out / f"{path.name}_{name}.gif")
     hstack(panels).save(out / f"{path.name}.png")
     return record
 
