@@ -56,11 +56,12 @@ class DemoBuilder:
         self.sigma = np.asarray(sigma, dtype=np.float32)
         self.device, self.steps = device, steps
 
-    def context(self, index: int, instruction=...):
+    def context(self, index: int, instruction=..., history: bool = True):
         item = dict(self.dataset[index])
         if instruction is not ...:
             item["instruction"] = instruction
         context, target = collate([item])
+        context = context if history else context.without_history()
         return context.to(self.device), target, item
 
     def scan(self, indices: list[int]) -> list[dict]:
@@ -74,6 +75,9 @@ class DemoBuilder:
             stats["min_ade"] = min_ade(preds, trace, valid & mask[:, None])
             stats["mean_ade"] = sample_stats(preds.mean(0), trace, valid, mask, target.moving[0].numpy())["ade"]
             stats.update(horizon_stats(preds, trace, valid & mask[:, None]))
+            blind = np.stack([predict(self.module, self.fitter, context.without_history(), seed, self.steps)[0]
+                              for seed in range(5)])
+            stats.update({f"nohist_{k}": v for k, v in horizon_stats(blind, trace, valid & mask[:, None]).items()})
             rows.append({"index": index, "instruction": item["instruction"], **stats})
         return rows
 
@@ -83,8 +87,8 @@ class DemoBuilder:
         valid = item["trace_valid"].numpy()
         panels = [("Teacher", item["trace"].numpy() * self.sigma, valid)] if teacher else []
         preds = []
-        for title, instruction, seed in variants:
-            context, _, _ = self.context(index, instruction)
+        for title, instruction, seed, *flags in variants:
+            context, _, _ = self.context(index, instruction, flags[0] if flags else True)
             pred = predict(self.module, self.fitter, context, seed, self.steps)[0]
             preds.append(pred)
             panels.append((title, pred * self.sigma, np.ones_like(valid)))
@@ -107,7 +111,7 @@ def build_demo(builder: DemoBuilder, out: Path, count: int = 200, seed: int = 0)
     for group, chosen in picks.items():
         for n, row in enumerate(chosen):
             name = f"{group}_{n}"
-            builder.render(out, name, row["index"], [("Model", ..., 0)], True)
+            builder.render(out, name, row["index"], [("Model", ..., 0), ("Model, no history", ..., 0, False)], True)
             cases.append({"image": f"{name}.png", "group": group, **row})
     others = [r["instruction"] for r in with_text]
     for n, row in enumerate(ranked[: len(ranked) // 2][:4]):
