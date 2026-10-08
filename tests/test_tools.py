@@ -10,6 +10,8 @@ from twe.data.dataset import QuerySampling, WorldWindowDataset
 from twe.data.synthetic import write_synthetic
 from twe.evaluation.demo import DemoBuilder
 from twe.evaluation.prompt_sweep import build_prompt_sweep
+from twe.evaluation.rollout import TraceRollout
+from twe.evaluation.rollout_eval import rollout_benchmark
 from twe.evaluation.teacher_compare import compare_traceextract
 from twe.preprocess.teacher import TeacherTracks
 from twe.training.pretrain_world import make_fitter
@@ -65,3 +67,16 @@ def test_teacher_compare_agrees_with_matching_tracker(tmp_path):
     assert abs(row["their_motion_px"] - row["our_motion_px"]) < 0.5 and (tmp_path / "out" / "ep0.png").exists()
     slow = compare_traceextract(PinholeTeacher(1.0), [path], tmp_path / "slow")[0]
     assert slow["our_motion_px"] < slow["their_motion_px"] and slow["end_px"] > 10
+
+
+def test_rollout_chains_segments_and_renders(tmp_path):
+    path = fake_episode(tmp_path, name="test_dataset_egodex/ep0", frames=60, speed=2.0, frame=12)
+    k = np.array([[200.0, 0, 160.0], [0, 200.0, 90.0], [0, 0, 1.0]])
+    np.savez(path / "cameras.npz", intrinsics=np.repeat(k[None], 60, 0), extrinsics=np.repeat(np.eye(4)[None], 60, 0),
+             height=180, width=320)
+    engine = TraceRollout(tiny_module(), make_fitter(tiny_stage1()), [0.05, 0.05, 0.1], TINY_WORLD, "cpu", steps=2)
+    report = rollout_benchmark(engine, [path], tmp_path / "rollout", horizon=2.0, stride=1.0, max_points=6)
+    row = report["episodes"][0]
+    assert set(row["errors"]) == {"closed_loop", "closed_loop_no_history", "open_loop"} and row["history_available"]
+    assert row["errors"]["closed_loop"]["0-2s"]["zero"] > 0 and report["segment_ms_median"] > 0
+    assert (tmp_path / "rollout" / "ep0.gif").exists() and (tmp_path / "rollout" / "ep0.png").exists()

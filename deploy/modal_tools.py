@@ -69,6 +69,32 @@ def prompts(data: str, run: str, scenes: int = 3, config: str = "configs/stage1.
     return record
 
 
+@app.function(image=modal_app.image.add_local_python_source("modal_app", "modal_export"), gpu=modal_app.GPU,
+              volumes={VOLUME_PATH: modal_app.volume}, secrets=[modal_app.hf_secret], timeout=2 * 3600, cpu=8,
+              memory=32768)
+def rollout(run: str, groups: str = "test_dataset_egodex,test_dataset_custom_dataset_human", per_group: int = 8,
+            horizon: float = 8.0, stride: float = 1.0, config: str = "configs/stage1.yaml") -> dict:
+    from twe.config import load_stage1_config
+    from twe.evaluation.rollout import TraceRollout
+    from twe.evaluation.rollout_eval import rollout_benchmark
+    from twe.models.world_module import build_world_module
+    from twe.training.checkpoint import artifact_world_config, load_world
+    from twe.training.pretrain_world import make_fitter
+
+    out = VOLUME_PATH / "runs" / run
+    world = artifact_world_config(out / "world_best.pt")
+    module = build_world_module(world)
+    sigma = load_world(out / "world_best.pt", module)["normalizer"][f"sigma_{world.target_space}"]
+    engine = TraceRollout(module.to("cuda"), make_fitter(load_stage1_config(Path("/root") / config)), sigma, world,
+                          "cuda")
+    episodes = [p for g in groups.split(",") for p in sorted((MU0_ROOT / "test_set" / g).iterdir())[:per_group]
+                if (p / "samples").exists()]
+    report = rollout_benchmark(engine, episodes, out / "rollout", horizon=horizon, stride=stride)
+    modal_app.volume.commit()
+    modal_app.sync_to_bucket(out / "rollout", f"runs/{run}/rollout")
+    return report
+
+
 @app.local_entrypoint()
 def main(action: str, data: str = "egodex_v4", run: str = "", group: str = "test_dataset_egodex") -> None:
     if action == "fetch-mu0":
@@ -76,6 +102,10 @@ def main(action: str, data: str = "egodex_v4", run: str = "", group: str = "test
     elif action == "compare-teacher":
         for row in compare_teacher.remote(group):
             print(row)
+    elif action == "rollout":
+        import json
+
+        print(json.dumps(rollout.remote(run), indent=1))
     elif action == "prompts":
         print(prompts.remote(data, run))
     else:
