@@ -93,3 +93,19 @@ def test_horizon_stats_zero_prediction_matches_zero_baseline():
     stats = horizon_stats(np.zeros((3, 5, 32, 3)), trace, valid)
     for h in (8, 16, 32):
         assert np.isclose(stats[f"ade@{h}"], stats[f"zero_ade@{h}"])
+
+
+def test_dataset_prefers_motion_caption():
+    from twe.data.dataset import QuerySampling, WorldWindowDataset
+
+    class Fixed(WorldWindowDataset):
+        def __init__(self, sampling):
+            self.sampling = sampling
+
+    meta = {"motion_caption": "put cup in bowl", "original_instruction": "tidy the table"}
+    assert Fixed(QuerySampling(randomize=False)).instruction(meta) == "put cup in bowl"
+    assert Fixed(QuerySampling(randomize=False)).instruction({"original_instruction": "tidy"}) == "tidy"
+    always = Fixed(QuerySampling(text_dropout=0.0, caption_probability=1.0))
+    assert always.instruction(meta) == "put cup in bowl"
+    never = Fixed(QuerySampling(text_dropout=1.0))
+    assert never.instruction(meta) is None

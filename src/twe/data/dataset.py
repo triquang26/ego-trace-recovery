@@ -21,6 +21,7 @@ class QuerySampling:
     drop_point_history: float = 0.3
     moving_fraction: float = 0.5
     text_dropout: float = 0.1
+    caption_probability: float = 0.8
 
 
 def moving_rows(reader: ShardReader) -> np.ndarray:
@@ -62,10 +63,13 @@ class WorldWindowDataset(Dataset):
         static_count = min(len(static), total - moving_count)
         return np.concatenate([moving[order(len(moving))[:moving_count]], static[order(len(static))[:static_count]]])
 
-    def instruction(self, text: str | None) -> str | None:
-        if self.sampling.randomize and float(torch.rand(())) < self.sampling.text_dropout:
+    def instruction(self, meta: dict) -> str | None:
+        caption, original = meta.get("motion_caption"), meta.get("original_instruction")
+        if not self.sampling.randomize:
+            return caption or original
+        if float(torch.rand(())) < self.sampling.text_dropout:
             return None
-        return text
+        return caption if caption and float(torch.rand(())) < self.sampling.caption_probability else original
 
     def keep_history(self, count: int) -> torch.Tensor:
         if not self.sampling.randomize:
@@ -106,7 +110,7 @@ class WorldWindowDataset(Dataset):
             "rgb": torch.from_numpy(np.array(reader.arrays["rgb"][row])),
             "image_valid": torch.from_numpy(np.array(reader.arrays["image_valid"][row])),
             "anchor_uv": uv, "anchor_mask": mask,
-            "instruction": self.instruction(reader.metas[row].get("original_instruction")),
+            "instruction": self.instruction(reader.metas[row]),
             "trace": trace, "trace_valid": valid, "controls": controls.float(), "fit_valid": fit_valid & mask,
             "moving": labels, "anchor_xyz": xyz, "history": history, "history_valid": history_valid,
             "intrinsics": torch.from_numpy(np.array(reader.arrays["intrinsics"][row])).float(),

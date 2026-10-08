@@ -3,7 +3,7 @@ import h5py
 import numpy as np
 import torch
 
-from twe.data.egodex import egodex_recordings
+from twe.data.egodex import egodex_recordings, load_captions
 from twe.data.manifest import Manifest
 from twe.data.shards import ShardWriter
 from twe.data.video import VideoFile
@@ -42,6 +42,14 @@ def test_egodex_recordings_use_selected_description(tmp_path):
     (recording,) = list(egodex_recordings(tmp_path / "test"))
     assert recording.instruction == "pour water back into the bottle"
     assert recording.recording_id == "test/pour_water/0" and len(recording.timestamps) == 10
+    import json
+
+    clips = tmp_path / "clips.json"
+    clips.write_text(json.dumps([{"file": "test_pour_water_0", "caption": "pour water from bottle into cup"},
+                                 {"file": "test_pour_water_9", "caption": "unused"}]))
+    (captioned,) = list(egodex_recordings(tmp_path / "test", captions=load_captions(clips)))
+    assert captioned.metadata["motion_caption"] == "pour water from bottle into cup"
+    assert list(egodex_recordings(tmp_path / "test", captions={})) == []
     (half,) = list(egodex_recordings(tmp_path / "test", frame_step=2))
     assert np.allclose(half.timestamps, recording.timestamps[::2])
     assert np.array_equal(half.read_frames(np.array([1, 2])), recording.read_frames(np.array([2, 4])))

@@ -24,7 +24,18 @@ def egodex_episodes(root: Path) -> list[tuple[str, Path, Path]]:
     return episodes
 
 
-def egodex_recording(part: str, task: str, hdf5: Path, video_path: Path, frame_step: int = 1) -> Recording:
+def caption_key(part: str, task: str, index: str) -> str:
+    return f"{part}_{task}_{index}"
+
+
+def load_captions(path: Path) -> dict[str, str]:
+    import json
+
+    return {clip["file"]: clip["caption"] for clip in json.loads(Path(path).read_text()) if clip.get("caption")}
+
+
+def egodex_recording(part: str, task: str, hdf5: Path, video_path: Path, frame_step: int = 1,
+                     caption: str | None = None) -> Recording:
     import h5py
 
     with h5py.File(hdf5, "r") as handle:
@@ -33,12 +44,15 @@ def egodex_recording(part: str, task: str, hdf5: Path, video_path: Path, frame_s
     recording_id = f"{part}/{task}/{hdf5.stem}"
     return Recording(recording_id, "egodex", recording_id, instruction, video.timestamps[::frame_step],
                      lambda indices: video.read(np.asarray(indices) * frame_step),
-                     {"task": task, "phase": "nominal", "frame_step": frame_step})
+                     {"task": task, "phase": "nominal", "frame_step": frame_step, "motion_caption": caption})
 
 
 def egodex_recordings(root: Path, start: int = 0, count: int | None = None, frame_step: int = 1,
-                      every: int = 1) -> Iterator[Recording]:
+                      every: int = 1, captions: dict[str, str] | None = None) -> Iterator[Recording]:
     root = Path(root)
-    episodes = egodex_episodes(root)[::every]
-    for task, hdf5, video in episodes[start : None if count is None else start + count]:
-        yield egodex_recording(root.name, task, hdf5, video, frame_step)
+    episodes = egodex_episodes(root)
+    if captions is not None:
+        episodes = [e for e in episodes if caption_key(root.name, e[0], e[1].stem) in captions]
+    for task, hdf5, video in episodes[::every][start : None if count is None else start + count]:
+        caption = None if captions is None else captions[caption_key(root.name, task, hdf5.stem)]
+        yield egodex_recording(root.name, task, hdf5, video, frame_step, caption)

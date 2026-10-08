@@ -10,6 +10,7 @@ CONTAINERS = int(os.environ.get("TWE_EXPORT_CONTAINERS", "4"))
 SPATRACKER = "/opt/SpaTrackerV2"
 SPATRACKER_COMMIT = "7e12274c52077860cebfe007a6290777db43b63c"
 EGODEX_URL = "https://ml-site.cdn-apple.com/datasets/egodex/{part}.zip"
+CAPTIONS = VOLUME_PATH / "raw" / "egodex" / "molmomotion_clips.json"
 
 BUCKET = os.environ.get("TWE_HF_BUCKET", "twanghcmut/trace-world-expert")
 download_image = modal.Image.debian_slim(python_version="3.11").apt_install("curl", "unzip")
@@ -37,16 +38,24 @@ hf_secret = modal.Secret.from_name("huggingface", required_keys=["HF_TOKEN"])
 
 @app.function(image=download_image, volumes={VOLUME_PATH: volume}, timeout=12 * 3600, cpu=8, memory=16384,
               ephemeral_disk=800 * 1024)
-def download_egodex(part: str) -> str:
+def download_egodex(part: str, tasks: str = "") -> str:
     import subprocess
 
     target = VOLUME_PATH / "raw" / "egodex"
-    if (target / part).exists():
+    wanted = [t for t in tasks.split(",") if t]
+    if (target / part).exists() and all((target / part / t).exists() for t in wanted):
         return f"{target / part} exists"
     archive = Path("/tmp") / f"{part}.zip"
-    subprocess.run(["curl", "-sSfL", "--retry", "5", "-o", str(archive), EGODEX_URL.format(part=part)], check=True)
+    command = ["curl", "-sSfL", "-C", "-", "--retry", "20", "--retry-all-errors", "--retry-delay", "10", "-o",
+               str(archive), EGODEX_URL.format(part=part)]
+    for _ in range(30):
+        if subprocess.run(command).returncode == 0:
+            break
+    else:
+        raise RuntimeError(f"download of {part} did not finish")
     target.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["unzip", "-q", str(archive), "-d", str(target)], check=True)
+    patterns = [f"{part}/{t}/*" for t in wanted]
+    subprocess.run(["unzip", "-q", "-o", str(archive), *patterns, "-d", str(target)], check=True)
     volume.commit()
     return str(target / part)
 
@@ -54,9 +63,9 @@ def download_egodex(part: str) -> str:
 @app.function(image=teacher_image, gpu=GPU, volumes={VOLUME_PATH: volume}, timeout=24 * 3600, cpu=8, memory=65536,
               max_containers=CONTAINERS)
 def export_egodex(dataset: str, part: str, split: str, start: int, count: int, stride: float,
-                  every: int = 1, frame_step: int = 2, chunk_seconds: float = 10.0) -> dict:
+                  every: int = 1, frame_step: int = 2, chunk_seconds: float = 10.0, captioned: bool = False) -> dict:
     from twe.config import WorldConfig
-    from twe.data.egodex import egodex_recordings
+    from twe.data.egodex import egodex_recordings, load_captions
     from twe.models.visual_encoder import DinoVisualEncoder
     from twe.preprocess.build_dataset import dino_selector, export_shard
     from twe.preprocess.export_windows import ExportSettings
@@ -70,7 +79,8 @@ def export_egodex(dataset: str, part: str, split: str, start: int, count: int, s
     cfg = WorldConfig()
     visual = DinoVisualEncoder(cfg.visual_encoder, cfg.visual_encoder_revision, cfg.patch_grid).to("cuda")
     teacher = load_spatracker("cuda")
-    recordings = egodex_recordings(VOLUME_PATH / "raw" / "egodex" / part, start, count, frame_step, every)
+    captions = load_captions(CAPTIONS) if captioned else None
+    recordings = egodex_recordings(VOLUME_PATH / "raw" / "egodex" / part, start, count, frame_step, every, captions)
     root.mkdir(parents=True, exist_ok=True)
     settings = ExportSettings(chunk_seconds=chunk_seconds)
     report = export_shard(recordings, teacher, dino_selector(visual, cfg, "cuda"), cfg, settings, root,
@@ -80,10 +90,15 @@ def export_egodex(dataset: str, part: str, split: str, start: int, count: int, s
 
 
 @app.function(image=teacher_image, volumes={VOLUME_PATH: volume}, timeout=600)
-def count_episodes(part: str, every: int = 1) -> int:
-    from twe.data.egodex import egodex_episodes
+def count_episodes(part: str, every: int = 1, captioned: bool = False) -> int:
+    from twe.data.egodex import caption_key, egodex_episodes, load_captions
 
-    return len(egodex_episodes(VOLUME_PATH / "raw" / "egodex" / part)[::every])
+    volume.reload()
+    episodes = egodex_episodes(VOLUME_PATH / "raw" / "egodex" / part)
+    if captioned:
+        captions = load_captions(CAPTIONS)
+        episodes = [e for e in episodes if caption_key(part, e[0], e[1].stem) in captions]
+    return len(episodes[::every])
 
 
 @app.function(image=teacher_image, volumes={VOLUME_PATH: volume}, timeout=3600)
@@ -140,27 +155,43 @@ def upload(dataset: str) -> str:
     return target
 
 
+@app.function(image=upload_image, volumes={VOLUME_PATH: volume}, timeout=1800)
+def fetch_captions() -> int:
+    import json
+    import shutil
+
+    from huggingface_hub import hf_hub_download
+
+    path = hf_hub_download("allenai/molmo-motion-1m", "egodex/annotations/egodex_clips.json", repo_type="dataset")
+    CAPTIONS.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(path, CAPTIONS)
+    volume.commit()
+    return len(json.loads(CAPTIONS.read_text()))
+
+
 @app.local_entrypoint()
 def main(action: str = "export", part: str = "test", dataset: str = "egodex_v1", split: str = "",
          start: int = 0, episodes: int = 0, per_shard: int = 16, stride: float = 0.5, val_every: int = 0,
-         every: int = 1) -> None:
+         every: int = 1, tasks: str = "", captioned: bool = False) -> None:
     if action == "download":
-        print(download_egodex.remote(part))
+        print(download_egodex.remote(part, tasks))
     elif action == "count":
-        print(count_episodes.remote(part, every))
+        print(count_episodes.remote(part, every, captioned))
     elif action == "export":
-        episodes = episodes or count_episodes.remote(part, every) - start
+        episodes = episodes or count_episodes.remote(part, every, captioned) - start
         starts = list(range(start, start + episodes, per_shard))
         fixed = split or ("validation" if part == "test" else "train")
         splits = [("validation" if n % val_every == val_every - 1 else "train") if val_every else fixed
                   for n in range(len(starts))]
-        args = [(dataset, part, sp, s, min(per_shard, start + episodes - s), stride, every)
+        args = [(dataset, part, sp, s, min(per_shard, start + episodes - s), stride, every, 2, 10.0, captioned)
                 for sp, s in zip(splits, starts)]
         for result in export_egodex.starmap(args):
             print(result)
     elif action == "teacher-videos":
         for record in teacher_videos.remote(dataset):
             print(record)
+    elif action == "captions":
+        print(fetch_captions.remote())
     elif action == "upload":
         print(upload.remote(dataset))
     elif action == "finalize":
