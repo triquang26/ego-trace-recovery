@@ -19,6 +19,21 @@ fit_min_valid_steps: 10
 fit_max_condition: 100000.0
 reliability_threshold: 0.5
 min_moving_points: 4
+train_shard_fraction: 1.0
+heldout_tasks:
+  - assemble_disassemble_furniture_bench_stool
+  - boil_serve_egg
+  - clip_unclip_papers
+  - fold_unfold_paper_basic
+  - insert_remove_cups_from_rack
+  - insert_remove_usb
+  - open_close_insert_remove_box
+  - pick_up_and_put_down_case_or_bag
+  - rake_smooth_zen_garden
+  - slot_batteries
+  - sweep_dustpan
+  - type_keyboard
+  - wrap_unwrap_food
 mixture:
   human_nominal: 0.5
   human_corrective: 0.25

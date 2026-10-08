@@ -1,9 +1,9 @@
-visual_encoder: facebook/dinov2-base
+visual_encoder: facebook/dinov3-vitb16-pretrain-lvd1689m
 visual_encoder_revision: main
 text_encoder: IDEA-Research/grounding-dino-tiny
 text_encoder_revision: main
 image_size: 336
-patch_grid: 24
+patch_grid: 21
 visual_dim: 768
 pooled_grid: 12
 text_dim: 256
