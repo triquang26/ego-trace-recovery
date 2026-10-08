@@ -14,6 +14,24 @@ def predict(module, fitter, context, seed: int, steps: int) -> np.ndarray:
     return fitter.decode(controls.double()).float().cpu().numpy()
 
 
+@torch.no_grad()
+def motion_probability(module, context) -> np.ndarray:
+    inputs = module.encode(context)
+    batch = context.anchor_uv.shape[0]
+    noise = module.guidance_noise(batch, context.anchor_uv.device)[:, : context.anchor_uv.shape[1]]
+    s = torch.ones(batch, device=context.anchor_uv.device)
+    return torch.sigmoid(module(inputs, noise, s).motion_logits.float()).cpu().numpy()[0]
+
+
+def auroc(scores: np.ndarray, labels: np.ndarray) -> float:
+    positives, negatives = labels.sum(), (~labels).sum()
+    if positives == 0 or negatives == 0:
+        return float("nan")
+    ranks = np.empty(len(scores))
+    ranks[np.argsort(scores)] = np.arange(1, len(scores) + 1)
+    return float((ranks[labels].sum() - positives * (positives + 1) / 2) / (positives * negatives))
+
+
 def sample_stats(pred, trace, valid, mask, moving) -> dict:
     v = valid & mask[:, None]
     dist = np.linalg.norm(pred - trace, axis=-1)
@@ -78,7 +96,9 @@ class DemoBuilder:
             blind = np.stack([predict(self.module, self.fitter, context.without_history(), seed, self.steps)[0]
                               for seed in range(5)])
             stats.update({f"nohist_{k}": v for k, v in horizon_stats(blind, trace, valid & mask[:, None]).items()})
-            rows.append({"index": index, "instruction": item["instruction"], **stats})
+            probs = motion_probability(self.module, context)[mask]
+            rows.append({"index": index, "instruction": item["instruction"], **stats,
+                         "_scores": probs.tolist(), "_labels": target.moving[0].numpy()[mask].tolist()})
         return rows
 
     def render(self, out: Path, name: str, index: int, variants: list[tuple[str, object, int]], teacher: bool):
@@ -91,11 +111,15 @@ class DemoBuilder:
             context, _, _ = self.context(index, instruction, flags[0] if flags else True)
             pred = predict(self.module, self.fitter, context, seed, self.steps)[0]
             preds.append(pred)
-            panels.append((title, pred * self.sigma, np.ones_like(valid)))
+            panels.append((title, pred * self.sigma, np.ones_like(valid), motion_probability(self.module, context)))
         meta = self.dataset.meta(index)
         render_case(out / f"{name}.png", item["rgb"].numpy(), item["anchor_xyz"].numpy(), item["intrinsics"].numpy(),
                     panels, rows, f"{meta['sample_id']} | {item['instruction'] or 'no instruction'}")
         return preds
+
+
+def public(row: dict) -> dict:
+    return {k: v for k, v in row.items() if not k.startswith("_")}
 
 
 def build_demo(builder: DemoBuilder, out: Path, count: int = 200, seed: int = 0) -> dict:
@@ -112,7 +136,7 @@ def build_demo(builder: DemoBuilder, out: Path, count: int = 200, seed: int = 0)
         for n, row in enumerate(chosen):
             name = f"{group}_{n}"
             builder.render(out, name, row["index"], [("Model", ..., 0), ("Model, no history", ..., 0, False)], True)
-            cases.append({"image": f"{name}.png", "group": group, **row})
+            cases.append({"image": f"{name}.png", "group": group, **public(row)})
     others = [r["instruction"] for r in with_text]
     for n, row in enumerate(ranked[: len(ranked) // 2][:4]):
         swap = next((t for t in rng.permutation(others) if t != row["instruction"]), None)
@@ -120,14 +144,23 @@ def build_demo(builder: DemoBuilder, out: Path, count: int = 200, seed: int = 0)
                     ("no instruction", None, 0)]
         preds = builder.render(out, f"swap_{n}", row["index"], variants, False)
         change = [float(np.linalg.norm(p - preds[0], axis=-1).mean()) for p in preds[1:]]
-        cases.append({"image": f"swap_{n}.png", "group": "instruction", **row, "swap": swap,
-                      "mean_change_swap": change[0], "mean_change_null": change[1]})
+        context, _, _ = builder.context(row["index"])
+        swapped, _, _ = builder.context(row["index"], swap)
+        shift = float(np.abs(motion_probability(builder.module, context)
+                             - motion_probability(builder.module, swapped)).mean())
+        cases.append({"image": f"swap_{n}.png", "group": "instruction", **public(row), "swap": swap,
+                      "mean_change_swap": change[0], "mean_change_null": change[1], "grounding_shift": shift})
     for n, row in enumerate(ranked[:2]):
         builder.render(out, f"seeds_{n}", row["index"], [(f"seed {s}", ..., s) for s in range(3)], False)
-        cases.append({"image": f"seeds_{n}.png", "group": "seeds", **row})
+        cases.append({"image": f"seeds_{n}.png", "group": "seeds", **public(row)})
     keys = ["ade", "mean_ade", "min_ade", "zero_ade", "dynamic_ade", "pred_motion"]
     keys += [k for k in rows[0] if "@" in k and all(k in r for r in rows)]
     summary = {key: float(np.mean([r[key] for r in rows])) for key in keys}
+    scores = np.concatenate([np.asarray(r["_scores"]) for r in rows])
+    labels = np.concatenate([np.asarray(r["_labels"], dtype=bool) for r in rows])
+    summary["motion_auroc"] = auroc(scores, labels)
+    shifts = [c["grounding_shift"] for c in cases if "grounding_shift" in c]
+    summary["grounding_shift"] = float(np.mean(shifts)) if shifts else float("nan")
     record = {"summary": summary, "scanned": len(rows), "cases": cases}
     (out / "demo.json").write_text(json.dumps(record, indent=2))
     return record

@@ -1,7 +1,7 @@
 import numpy as np
 from PIL import Image
 
-from twe.evaluation.trace_style import absolute_points, draw_paths, grayscale, hstack, titled, top_down
+from twe.evaluation.trace_style import absolute_points, draw_paths, draw_scores, grayscale, hstack, titled, top_down
 
 
 def project(anchor_xyz: np.ndarray, trace: np.ndarray, intrinsics: np.ndarray) -> np.ndarray:
@@ -22,15 +22,18 @@ def shared_extent(sets: list[tuple[np.ndarray, np.ndarray]], rows: np.ndarray) -
 
 
 def render_case(path, rgb: np.ndarray, anchor_xyz: np.ndarray, intrinsics: np.ndarray,
-                panels: list[tuple[str, np.ndarray, np.ndarray]], rows: np.ndarray, suptitle: str,
+                panels: list[tuple], rows: np.ndarray, suptitle: str,
                 upscale: int = 2) -> None:
     base = grayscale(Image.fromarray(rgb).resize((rgb.shape[1] * upscale, rgb.shape[0] * upscale)))
-    sets = [absolute_points(anchor_xyz, trace, valid) for _, trace, valid in panels]
+    sets = [absolute_points(anchor_xyz, panel[1], panel[2]) for panel in panels]
     extent = shared_extent(sets, rows)
     views, tops = [], []
-    for (title, trace, valid), (points, keep) in zip(panels, sets):
+    for (title, trace, valid, *scores), (points, keep) in zip(panels, sets):
         pixels = project(anchor_xyz, trace, intrinsics) * upscale
-        views.append(titled(draw_paths(base.copy(), pixels, keep, rows, keep.shape[1]), title))
+        view = draw_paths(base.copy(), pixels, keep, rows, keep.shape[1])
+        if scores:
+            view = draw_scores(view, pixels[:, 0], scores[0], rows)
+        views.append(titled(view, title))
         tops.append(titled(top_down(points, keep, rows, keep.shape[1], base.width, extent), f"{title}: x-z"))
     row1, row2 = hstack(views), hstack(tops)
     sheet = Image.new("RGB", (row1.width, row1.height + row2.height + 30), (24, 24, 28))

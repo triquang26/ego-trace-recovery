@@ -31,6 +31,19 @@ def draw_paths(canvas: Image.Image, pixels: np.ndarray, valid: np.ndarray, rows:
     return canvas
 
 
+def score_color(score: float) -> tuple[int, int, int]:
+    hue = 0.66 * (1.0 - float(np.clip(score, 0.0, 1.0)))
+    return tuple(int(round(255 * c)) for c in colorsys.hsv_to_rgb(hue, 0.95, 1.0))
+
+
+def draw_scores(canvas: Image.Image, pixels: np.ndarray, scores: np.ndarray, rows: np.ndarray) -> Image.Image:
+    draw = ImageDraw.Draw(canvas)
+    for i in rows:
+        x, y = pixels[i]
+        draw.ellipse([x - 6, y - 6, x + 6, y + 6], fill=score_color(scores[i]), outline=(0, 0, 0))
+    return canvas
+
+
 def draw_history(canvas: Image.Image, pixels: np.ndarray, valid: np.ndarray, rows: np.ndarray) -> Image.Image:
     draw = ImageDraw.Draw(canvas)
     for i in rows:

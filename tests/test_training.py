@@ -109,3 +109,12 @@ def test_dataset_prefers_motion_caption():
     assert always.instruction(meta) == "put cup in bowl"
     never = Fixed(QuerySampling(text_dropout=1.0))
     assert never.instruction(meta) is None
+
+
+def test_auroc_orders_scores():
+    import numpy as np
+
+    from twe.evaluation.demo import auroc
+
+    assert auroc(np.array([0.9, 0.8, 0.1, 0.2]), np.array([True, True, False, False])) == 1.0
+    assert auroc(np.array([0.1, 0.2, 0.9, 0.8]), np.array([True, True, False, False])) == 0.0
