@@ -64,41 +64,31 @@ def download_egodex(part: str, tasks: str = "") -> str:
               max_containers=CONTAINERS)
 def export_egodex(dataset: str, part: str, split: str, start: int, count: int, stride: float,
                   every: int = 1, frame_step: int = 2, chunk_seconds: float = 10.0, captioned: bool = False) -> dict:
-    from twe.config import WorldConfig
-    from twe.data.egodex import egodex_recordings, load_captions
-    from twe.models.visual_encoder import DinoVisualEncoder
-    from twe.preprocess.build_dataset import dino_selector, export_shard
-    from twe.preprocess.export_windows import ExportSettings
-    from twe.preprocess.spatracker_teacher import load_spatracker
+    from twe.preprocess.build_dataset import export_egodex_shard
 
     volume.reload()
-    name = f"egodex-{part}-e{every}-{start:06d}"
-    root = VOLUME_PATH / "data" / dataset
-    if (root / name / "entry.json").exists():
-        return {"shard": name, "cached": True}
-    cfg = WorldConfig()
-    visual = DinoVisualEncoder(cfg.visual_encoder, cfg.visual_encoder_revision, cfg.patch_grid).to("cuda")
-    teacher = load_spatracker("cuda")
-    captions = load_captions(CAPTIONS) if captioned else None
-    recordings = egodex_recordings(VOLUME_PATH / "raw" / "egodex" / part, start, count, frame_step, every, captions)
-    root.mkdir(parents=True, exist_ok=True)
-    settings = ExportSettings(chunk_seconds=chunk_seconds)
-    report = export_shard(recordings, teacher, dino_selector(visual, cfg, "cuda"), cfg, settings, root,
-                          name, "human_nominal", split, stride)
+    report = export_egodex_shard(VOLUME_PATH / "raw" / "egodex", VOLUME_PATH / "data" / dataset,
+                                 CAPTIONS if captioned else None, part, split, start, count, stride, every,
+                                 frame_step, chunk_seconds)
     volume.commit()
-    return {k: v for k, v in report.items() if k != "skipped"} | {"skipped": len(report.get("skipped", []))}
+    return report
+
+
+@app.function(image=teacher_image, timeout=24 * 3600)
+def orchestrate(args: list[tuple]) -> int:
+    finished = 0
+    for result in export_egodex.starmap(args, return_exceptions=True):
+        print(result, flush=True)
+        finished += 1
+    return finished
 
 
 @app.function(image=teacher_image, volumes={VOLUME_PATH: volume}, timeout=600)
 def count_episodes(part: str, every: int = 1, captioned: bool = False) -> int:
-    from twe.data.egodex import caption_key, egodex_episodes, load_captions
+    from twe.data.egodex import count_egodex, load_captions
 
     volume.reload()
-    episodes = egodex_episodes(VOLUME_PATH / "raw" / "egodex" / part)
-    if captioned:
-        captions = load_captions(CAPTIONS)
-        episodes = [e for e in episodes if caption_key(part, e[0], e[1].stem) in captions]
-    return len(episodes[::every])
+    return count_egodex(VOLUME_PATH / "raw" / "egodex" / part, every, load_captions(CAPTIONS) if captioned else None)
 
 
 @app.function(image=teacher_image, volumes={VOLUME_PATH: volume}, timeout=3600)
@@ -120,27 +110,11 @@ def finalize(dataset: str, moving_threshold_px: float = 10.0) -> dict:
 
 @app.function(image=teacher_image, volumes={VOLUME_PATH: volume}, timeout=3600, cpu=8, memory=32768)
 def teacher_videos(dataset: str, count: int = 8, frame_step: int = 2) -> list[dict]:
-    import numpy as np
-
-    from twe.data.egodex import egodex_recording
-    from twe.evaluation.teacher_video import most_dynamic, render_window, write_index
+    from twe.evaluation.teacher_video import render_dataset
 
     volume.reload()
-    root = VOLUME_PATH / "data" / dataset
-    out = VOLUME_PATH / "viz" / dataset / "teacher"
-    out.mkdir(parents=True, exist_ok=True)
-    records = []
-    for n, (reader, row) in enumerate(most_dynamic(root, count)):
-        meta = reader.metas[row]
-        part, task, index = meta["recording_id"].split("/")
-        raw = VOLUME_PATH / "raw" / "egodex" / part / task
-        recording = egodex_recording(part, task, raw / f"{index}.hdf5", raw / f"{index}.mp4", frame_step)
-        start = int(np.argmin(np.abs(recording.timestamps - meta["current_timestamp_seconds"])))
-        stop = int(np.searchsorted(recording.timestamps, meta["current_timestamp_seconds"] + 2.0, side="right"))
-        frames = recording.read_frames(np.arange(start, stop))
-        times = recording.timestamps[start:stop] - recording.timestamps[start]
-        records.append(render_window(reader, row, frames, times, out / f"teacher_{n}.gif"))
-    write_index(out, records)
+    records = render_dataset(VOLUME_PATH / "data" / dataset, VOLUME_PATH / "raw" / "egodex",
+                             VOLUME_PATH / "viz" / dataset / "teacher", count, frame_step)
     volume.commit()
     return records
 
@@ -185,8 +159,8 @@ def main(action: str = "export", part: str = "test", dataset: str = "egodex_v1",
                   for n in range(len(starts))]
         args = [(dataset, part, sp, s, min(per_shard, start + episodes - s), stride, every, 2, 10.0, captioned)
                 for sp, s in zip(splits, starts)]
-        for result in export_egodex.starmap(args):
-            print(result)
+        call = orchestrate.spawn(args)
+        print(f"export of {len(args)} shards running on Modal: {call.object_id}")
     elif action == "teacher-videos":
         for record in teacher_videos.remote(dataset):
             print(record)

@@ -56,3 +56,11 @@ def egodex_recordings(root: Path, start: int = 0, count: int | None = None, fram
     for task, hdf5, video in episodes[::every][start : None if count is None else start + count]:
         caption = None if captions is None else captions[caption_key(root.name, task, hdf5.stem)]
         yield egodex_recording(root.name, task, hdf5, video, frame_step, caption)
+
+
+def count_egodex(root: Path, every: int = 1, captions: dict[str, str] | None = None) -> int:
+    root = Path(root)
+    episodes = egodex_episodes(root)
+    if captions is not None:
+        episodes = [e for e in episodes if caption_key(root.name, e[0], e[1].stem) in captions]
+    return len(episodes[::every])

@@ -62,3 +62,24 @@ def relabel_moving(root: Path, threshold_px: float) -> int:
         np.save(Path(root) / entry.path / "trace_moving.npy", labels)
         moving_total += int(labels.sum())
     return moving_total
+
+
+def export_egodex_shard(raw_root: Path, data_root: Path, captions_path: Path | None, part: str, split: str,
+                        start: int, count: int, stride: float, every: int, frame_step: int, chunk_seconds: float,
+                        device: str = "cuda") -> dict:
+    from twe.data.egodex import egodex_recordings, load_captions
+    from twe.models.visual_encoder import DinoVisualEncoder
+    from twe.preprocess.spatracker_teacher import load_spatracker
+
+    name = f"egodex-{part}-e{every}-{start:06d}"
+    if (Path(data_root) / name / "entry.json").exists():
+        return {"shard": name, "cached": True}
+    cfg = WorldConfig()
+    visual = DinoVisualEncoder(cfg.visual_encoder, cfg.visual_encoder_revision, cfg.patch_grid).to(device)
+    captions = load_captions(captions_path) if captions_path else None
+    recordings = egodex_recordings(Path(raw_root) / part, start, count, frame_step, every, captions)
+    Path(data_root).mkdir(parents=True, exist_ok=True)
+    report = export_shard(recordings, load_spatracker(device), dino_selector(visual, cfg, device), cfg,
+                          ExportSettings(chunk_seconds=chunk_seconds), data_root, name, "human_nominal", split, stride)
+    return {"shard": name, **{k: v for k, v in report.items() if k != "skipped"},
+            "skipped": len(report.get("skipped", []))}

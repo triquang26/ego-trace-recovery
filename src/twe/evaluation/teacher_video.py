@@ -62,3 +62,23 @@ def render_window(reader: ShardReader, row: int, frames: np.ndarray, times: np.n
 
 def write_index(out: Path, records: list[dict]) -> None:
     (out / "index.json").write_text(json.dumps(records, indent=2))
+
+
+def render_dataset(root: Path, raw_root: Path, out: Path, count: int, frame_step: int) -> list[dict]:
+    from twe.data.egodex import egodex_recording
+
+    out.mkdir(parents=True, exist_ok=True)
+    records = []
+    for n, (reader, row) in enumerate(most_dynamic(root, count)):
+        meta = reader.metas[row]
+        part, task, index = meta["recording_id"].split("/")
+        raw = Path(raw_root) / part / task
+        recording = egodex_recording(part, task, raw / f"{index}.hdf5", raw / f"{index}.mp4", frame_step)
+        now = meta["current_timestamp_seconds"]
+        start = int(np.argmin(np.abs(recording.timestamps - now)))
+        stop = int(np.searchsorted(recording.timestamps, now + 2.0, side="right"))
+        frames = recording.read_frames(np.arange(start, stop))
+        times = recording.timestamps[start:stop] - recording.timestamps[start]
+        records.append(render_window(reader, row, frames, times, out / f"teacher_{n}.gif"))
+    write_index(out, records)
+    return records
