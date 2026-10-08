@@ -74,3 +74,16 @@ def test_demo_renders_cases(tmp_path):
     groups = {case["group"] for case in record["cases"]}
     assert {"best", "worst", "instruction", "seeds"} <= groups
     assert all((tmp_path / "demo" / case["image"]).exists() for case in record["cases"])
+
+
+def test_horizon_stats_zero_prediction_matches_zero_baseline():
+    import numpy as np
+
+    from twe.evaluation.demo import horizon_stats
+
+    rng = np.random.default_rng(0)
+    trace = rng.normal(size=(5, 32, 3))
+    valid = np.ones((5, 32), bool)
+    stats = horizon_stats(np.zeros((3, 5, 32, 3)), trace, valid)
+    for h in (8, 16, 32):
+        assert np.isclose(stats[f"ade@{h}"], stats[f"zero_ade@{h}"])

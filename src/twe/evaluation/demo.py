@@ -33,6 +33,23 @@ def min_ade(preds: np.ndarray, trace: np.ndarray, valid: np.ndarray) -> float:
     return float(per_point.min(0)[keep].mean()) if keep.any() else 0.0
 
 
+def horizon_stats(preds: np.ndarray, trace: np.ndarray, valid: np.ndarray, horizons=(8, 16, 32)) -> dict:
+    out = {}
+    for h in horizons:
+        v = valid[:, :h]
+        keep = v.any(-1)
+        if not keep.any():
+            continue
+        count = np.maximum(v.sum(-1), 1)
+        per_point = lambda pred: (np.linalg.norm(pred[:, :h] - trace[:, :h], axis=-1) * v).sum(-1) / count
+        samples = np.stack([per_point(p) for p in preds])
+        out[f"ade@{h}"] = float(samples[0][keep].mean())
+        out[f"mean_ade@{h}"] = float(per_point(preds.mean(0))[keep].mean())
+        out[f"min_ade@{h}"] = float(samples.min(0)[keep].mean())
+        out[f"zero_ade@{h}"] = float(((np.linalg.norm(trace[:, :h], axis=-1) * v).sum(-1) / count)[keep].mean())
+    return out
+
+
 class DemoBuilder:
     def __init__(self, module, fitter, dataset, sigma, device, steps: int = 4):
         self.module, self.fitter, self.dataset = module.eval(), fitter, dataset
@@ -56,6 +73,7 @@ class DemoBuilder:
             stats = sample_stats(preds[0], trace, valid, mask, target.moving[0].numpy())
             stats["min_ade"] = min_ade(preds, trace, valid & mask[:, None])
             stats["mean_ade"] = sample_stats(preds.mean(0), trace, valid, mask, target.moving[0].numpy())["ade"]
+            stats.update(horizon_stats(preds, trace, valid & mask[:, None]))
             rows.append({"index": index, "instruction": item["instruction"], **stats})
         return rows
 
@@ -103,7 +121,8 @@ def build_demo(builder: DemoBuilder, out: Path, count: int = 200, seed: int = 0)
     for n, row in enumerate(ranked[:2]):
         builder.render(out, f"seeds_{n}", row["index"], [(f"seed {s}", ..., s) for s in range(3)], False)
         cases.append({"image": f"seeds_{n}.png", "group": "seeds", **row})
-    keys = ("ade", "mean_ade", "min_ade", "zero_ade", "dynamic_ade", "pred_motion")
+    keys = ["ade", "mean_ade", "min_ade", "zero_ade", "dynamic_ade", "pred_motion"]
+    keys += [k for k in rows[0] if "@" in k and all(k in r for r in rows)]
     summary = {key: float(np.mean([r[key] for r in rows])) for key in keys}
     record = {"summary": summary, "scanned": len(rows), "cases": cases}
     (out / "demo.json").write_text(json.dumps(record, indent=2))
